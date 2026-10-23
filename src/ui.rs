@@ -440,7 +440,7 @@ fn gif_view(state: &State) -> Element<'_, Message> {
 
     let grid_content: Element<_> = if let Some(ref err) = state.gif.error {
         center(
-            text(format!("Giphy error: {err}"))
+            text(format!("Klipy error: {err}"))
                 .width(Fill)
                 .align_x(Center)
                 .size(16)

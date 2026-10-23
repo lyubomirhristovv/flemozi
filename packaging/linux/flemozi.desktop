@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Flemozi
+GenericName=Emoji Picker
+Comment=Emoji, emoticon and GIF picker
+Exec=flemozi
+Icon=flemozi
+Terminal=false
+Categories=Utility;
+Keywords=emoji;emoticon;gif;picker;
+StartupWMClass=flemozi
+Actions=Toggle;
+
+[Desktop Action Toggle]
+Name=Toggle Picker
+Exec=flemozi --toggle

@@ -1,6 +1,6 @@
 # Flemozi
 
-Rust + [iced] v0.14 desktop emoji picker. **Windows & macOS**.
+Rust + [iced] v0.14 desktop emoji picker. **Windows, macOS & Linux**.
 **Not Flutter** (README is stale).
 
 ## Build & Run
@@ -25,6 +25,15 @@ the binary via `OUT_DIR/env_vars.rs`.
 
 `winres` in `build.rs` embeds `assets/icon.ico` into the `.exe` (Windows only).
 
+## Arch Linux package
+
+```sh
+cd packaging/arch && makepkg -si
+```
+
+On Wayland there is no global hotkey: bind `flemozi --toggle` in the desktop's
+shortcut settings.
+
 ## Installer
 
 `cargo-packager` builds an NSIS installer:
@@ -44,12 +53,12 @@ Trigger the "Flemozi Release Binary" workflow in GitHub Actions with:
 - `dry_run`: `true` to test without uploading
 
 Secrets `DOTENV_RELEASE` / `DOTENV_NIGHTLY` must contain the full `.env` file
-(e.g. `GIPHY_API_KEY=xxx`).
+(e.g. `KLIPY_API_KEY=xxx`).
 
-## `.env` is stale
+## `.env`
 
-`.env.example` asks for `TENOR_API_KEY`/`GIPHY_API_KEY` — leftover from the
-Flutter version. Current Rust code does not read `.env`.
+`.env` holds `KLIPY_API_KEY` (GIF tab, https://partner.klipy.com). It is
+embedded at build time; at runtime the `KLIPY_API_KEY` env var is a fallback.
 
 ## Architecture
 
@@ -59,6 +68,7 @@ Flutter version. Current Rust code does not read `.env`.
 | `src/app.rs` | State, messages, update & subscription logic |
 | `src/ui/` | Widgets (grid, preview, styles) |
 | `src/win32.rs` | Windows FFI: hook, window mgmt, clipboard paste |
+| `src/linux.rs` | Linux: iced-driven keys, `--toggle` IPC socket, GTK tray thread, clipboard + ydotool/wtype/xdotool paste |
 | `src/macos.rs` | macOS FFI: CGEvent tap, NSWindow mgmt, clipboard paste |
 | `src/search.rs` | Simple substring/tag matching |
 | `src/emoji.rs` | EmojiEntry → Twemoji image resolution |

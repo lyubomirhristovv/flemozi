@@ -24,6 +24,12 @@ impl Default for Config {
 }
 
 impl Config {
+    #[cfg(target_os = "linux")]
+    fn path() -> PathBuf {
+        xdg_config_home().join("flemozi").join("config.json")
+    }
+
+    #[cfg(not(target_os = "linux"))]
     fn path() -> PathBuf {
         let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
         PathBuf::from(appdata).join("flemozi").join("config.json")
@@ -47,6 +53,26 @@ impl Config {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn apply_launch_at_startup(&self) {
+        let dir = xdg_config_home().join("autostart");
+        let file = dir.join("flemozi.desktop");
+        if self.launch_at_startup {
+            let exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "flemozi".to_string());
+            let entry = format!(
+                "[Desktop Entry]\nType=Application\nName=Flemozi\nExec=\"{exe}\" --hidden\n\
+                 Icon=flemozi\nX-GNOME-Autostart-enabled=true\n"
+            );
+            let _ = fs::create_dir_all(&dir);
+            let _ = fs::write(&file, entry);
+        } else {
+            let _ = fs::remove_file(&file);
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
     pub fn apply_launch_at_startup(&self) {
         let startup = std::env::var("APPDATA")
             .map(|a| PathBuf::from(a).join(r"Microsoft\Windows\Start Menu\Programs\Startup"))
@@ -71,4 +97,13 @@ impl Config {
             let _ = fs::remove_file(&lnk);
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_config_home() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."))
 }

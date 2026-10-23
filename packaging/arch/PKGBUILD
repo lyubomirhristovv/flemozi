@@ -1,0 +1,36 @@
+# Local PKGBUILD: builds the Rust version of Flemozi from this checkout.
+# Usage (from this directory): makepkg -si
+pkgname=flemozi
+pkgver=0.1.0
+pkgrel=2
+pkgdesc='Emoji, emoticon and GIF picker (Rust/iced)'
+arch=('x86_64')
+url='https://github.com/lyubomirhristovv/flemozi'
+license=('GPL-2.0-or-later')
+depends=('gtk3' 'libayatana-appindicator' 'libxkbcommon' 'wayland' 'fontconfig')
+makedepends=('cargo')
+optdepends=('ydotool: auto-paste on Wayland (needs ydotoold running)'
+            'wtype: auto-paste on wlroots compositors'
+            'xdotool: auto-paste on X11')
+options=('!lto' '!debug')
+
+_root="$(realpath "$startdir/../..")"
+
+pkgver() {
+    grep -m1 '^version' "$_root/Cargo.toml" | cut -d'"' -f2
+}
+
+build() {
+    cd "$_root"
+    export CARGO_TARGET_DIR="$srcdir/target"
+    export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/build --remap-path-prefix=$_root=/build/flemozi"
+    cargo build --release --locked
+}
+
+package() {
+    install -Dm755 "$srcdir/target/release/flemozi" "$pkgdir/usr/bin/flemozi"
+    install -Dm644 "$_root/packaging/linux/flemozi.desktop" "$pkgdir/usr/share/applications/flemozi.desktop"
+    install -Dm644 "$_root/assets/logo.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/flemozi.png"
+    install -Dm644 "$_root/assets/logo.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/flemozi.svg"
+    install -Dm644 "$_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::app::{Message, Move, SPACING, SearchState};
 
-const API_BASE: &str = "https://api.giphy.com/v1/gifs";
+const API_BASE: &str = "https://api.klipy.com/api/v1";
 const GIF_COLUMNS: usize = 2;
 
 #[derive(Debug, Clone)]
@@ -17,7 +17,7 @@ pub struct GifEntry {
     pub gif_url: String,
     pub preview_url: String,
     pub slug: String,
-    pub rating: String,
+    pub title: String,
 }
 
 pub struct GifTab {
@@ -133,56 +133,67 @@ impl GifTab {
     }
 }
 
-// ── Minimal Giphy API response types ──
+// ── Minimal Klipy API response types ──
 
 #[derive(Deserialize)]
-struct GiphyResponse {
-    data: Vec<GiphyGif>,
-    meta: GiphyMeta,
+struct KlipyResponse {
+    #[serde(default)]
+    result: bool,
+    data: Option<KlipyData>,
 }
 
 #[derive(Deserialize)]
-struct GiphyMeta {
-    status: i64,
-    msg: String,
+struct KlipyData {
+    #[serde(default)]
+    data: Vec<KlipyItem>,
 }
 
 #[derive(Deserialize)]
-struct GiphyGif {
-    id: String,
-    url: String,
+struct KlipyItem {
+    #[serde(default)]
+    id: serde_json::Value,
+    #[serde(default)]
     slug: String,
-    rating: String,
-    images: GiphyImages,
+    #[serde(default)]
+    title: String,
+    // Ad placements have no `file`.
+    file: Option<KlipyFile>,
 }
 
 #[derive(Deserialize)]
-struct GiphyImages {
-    downsized: Option<GiphyImage>,
-    downsized_still: Option<GiphyImage>,
-    fixed_width_small: Option<GiphyImage>,
-    original: Option<GiphyImage>,
+struct KlipyFile {
+    hd: Option<KlipyFormats>,
+    md: Option<KlipyFormats>,
+    sm: Option<KlipyFormats>,
+    xs: Option<KlipyFormats>,
 }
 
 #[derive(Deserialize)]
-struct GiphyImage {
+struct KlipyFormats {
+    gif: Option<KlipyMedia>,
+}
+
+#[derive(Deserialize)]
+struct KlipyMedia {
     url: String,
 }
 
 // ── HTTP helpers ──
 
 fn api_key() -> Result<String, String> {
-    crate::env::giphy_api_key()
-        .ok_or_else(|| "GIPHY_API_KEY not set (missing from .env at build time)".to_string())
+    crate::env::klipy_api_key()
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "KLIPY_API_KEY not set (add it to .env before building, or export it)".to_string())
+}
+
+fn format_gif_url(f: &Option<KlipyFormats>) -> Option<String> {
+    f.as_ref()?.gif.as_ref().map(|m| m.url.clone()).filter(|u| !u.is_empty())
 }
 
 async fn get(path: &str, params: &[(&str, &str)]) -> Result<Vec<GifEntry>, String> {
     let key = api_key()?;
-    let url = reqwest::Url::parse_with_params(
-        &format!("{API_BASE}{path}"),
-        std::iter::once(&("api_key", key.as_str())).chain(params),
-    )
-    .map_err(|e| format!("invalid URL: {e}"))?;
+    let url = reqwest::Url::parse_with_params(&format!("{API_BASE}/{key}/gifs{path}"), params)
+        .map_err(|e| format!("invalid URL: {e}"))?;
 
     let resp = reqwest::get(url)
         .await
@@ -191,38 +202,41 @@ async fn get(path: &str, params: &[(&str, &str)]) -> Result<Vec<GifEntry>, Strin
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Giphy API returned {status}: {body}"));
+        return Err(format!("Klipy API returned {status}: {body}"));
     }
 
-    let body: GiphyResponse = resp
+    let body: KlipyResponse = resp
         .json()
         .await
         .map_err(|e| format!("JSON parse failed: {e}"))?;
 
-    if body.meta.status != 200 {
-        return Err(format!("Giphy API error: {} ({})", body.meta.msg, body.meta.status));
+    if !body.result {
+        return Err("Klipy API returned an unsuccessful result".to_string());
     }
 
     Ok(body
         .data
+        .map(|d| d.data)
+        .unwrap_or_default()
         .into_iter()
-        .map(|g| GifEntry {
-            id: g.id,
-            url: g.url,
-            gif_url: g
-                .images
-                .downsized
-                .or(g.images.original)
-                .map(|i| i.url)
-                .unwrap_or_default(),
-            preview_url: g
-                .images
-                .fixed_width_small
-                .or(g.images.downsized_still)
-                .map(|i| i.url)
-                .unwrap_or_default(),
-            slug: g.slug,
-            rating: g.rating,
+        .filter_map(|g| {
+            let file = g.file?;
+            let gif_url = format_gif_url(&file.md).or_else(|| format_gif_url(&file.hd))?;
+            let preview_url = format_gif_url(&file.sm)
+                .or_else(|| format_gif_url(&file.xs))
+                .unwrap_or_else(|| gif_url.clone());
+            let id = match g.id {
+                serde_json::Value::String(s) => s,
+                v => v.to_string(),
+            };
+            Some(GifEntry {
+                id,
+                url: format!("https://klipy.com/gifs/{}", g.slug),
+                gif_url,
+                preview_url,
+                slug: g.slug,
+                title: g.title,
+            })
         })
         .collect())
 }
@@ -235,9 +249,9 @@ pub async fn download_image(url: String) -> Vec<u8> {
 }
 
 pub async fn fetch_trending_gifs() -> Result<Vec<GifEntry>, String> {
-    let result = get("/trending", &[("limit", "50"), ("offset", "0"), ("rating", "g")]).await;
+    let result = get("/trending", &[("per_page", "50"), ("page", "1")]).await;
     if let Err(ref e) = result {
-        tracing::error!("Giphy trending failed: {e}");
+        tracing::error!("Klipy trending failed: {e}");
     }
     result
 }
@@ -251,15 +265,15 @@ pub async fn search_gifs(query: String) -> Result<Vec<GifEntry>, String> {
         "/search",
         &[
             ("q", &q),
-            ("limit", "50"),
-            ("offset", "0"),
-            ("rating", "g"),
-            ("lang", "en"),
+            ("per_page", "50"),
+            ("page", "1"),
+            ("rating", "pg"),
+            ("locale", "en"),
         ],
     )
     .await;
     if let Err(ref e) = result {
-        tracing::error!("Giphy search failed: {e}");
+        tracing::error!("Klipy search failed: {e}");
     }
     result
 }

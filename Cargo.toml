@@ -40,6 +40,11 @@ core-foundation = "0.10"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.24", default-features = false, features = ["gtk"] }
+gtk = "0.18"
+arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
+
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winres = "0.1"
 

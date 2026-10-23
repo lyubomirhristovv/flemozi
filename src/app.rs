@@ -8,7 +8,10 @@ use iced::{clipboard, window, Element, Point, Subscription, Task as Command};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 use tracing::{info, warn};
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{MenuEvent, MenuId};
+#[cfg(not(target_os = "linux"))]
+use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
+#[cfg(not(target_os = "linux"))]
 use tray_icon::TrayIconBuilder;
 
 use crate::config::Config;
@@ -21,6 +24,16 @@ use crate::ui::main_view;
 use crate::win32::{self as platform, HookKeyEvent};
 #[cfg(target_os = "macos")]
 use crate::macos::{self as platform, HookKeyEvent};
+#[cfg(target_os = "linux")]
+use crate::linux::{self as platform, HookKeyEvent};
+
+#[cfg(target_os = "linux")]
+static START_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+pub fn set_start_hidden(hidden: bool) {
+    START_HIDDEN.store(hidden, std::sync::atomic::Ordering::SeqCst);
+}
 
 pub(crate) const COLUMNS: usize = 10;
 pub(crate) const SPACING: f32 = 4.0;
@@ -74,6 +87,8 @@ pub struct State {
     pub window_id: Option<window::Id>,
     pub our_hwnd: Option<isize>,
     pub last_foreground: Option<isize>,
+    #[allow(dead_code)]
+    pub system_theme: iced::theme::Mode,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +118,12 @@ pub enum Message {
     GifThumbnail(usize, Vec<u8>),
     GifPaste(Vec<u8>),
     FontLoaded(Result<(), iced::font::Error>),
+    #[allow(dead_code)]
+    ToggleWindow,
+    #[allow(dead_code)]
+    WindowClosed(window::Id),
+    #[allow(dead_code)]
+    SystemTheme(iced::theme::Mode),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -132,9 +153,22 @@ impl Flemozi {
             window_id: None,
             our_hwnd: None,
             last_foreground: None,
+            system_theme: iced::theme::Mode::None,
         };
 
+        #[cfg(not(target_os = "linux"))]
         let cmd = window::latest().map(Message::Init);
+        #[cfg(target_os = "linux")]
+        let cmd = {
+            let setup = Command::done(Message::Setup(0));
+            let theme = iced::system::theme().map(Message::SystemTheme);
+            let setup = Command::batch([theme, setup]);
+            if START_HIDDEN.load(std::sync::atomic::Ordering::SeqCst) {
+                setup
+            } else {
+                setup.chain(Command::done(Message::ToggleWindow))
+            }
+        };
         let font_bytes: &[u8] = include_bytes!("../assets/NotoColorEmoji.ttf");
         let font_cmd = iced::font::load(font_bytes).map(Message::FontLoaded);
 
@@ -177,6 +211,38 @@ impl Flemozi {
                 }
                 Command::none()
             }
+            #[cfg(target_os = "linux")]
+            Message::Setup(_) => {
+                state.register_hotkey();
+                let img = image::load_from_memory(LOGO_BYTES).expect("Failed to load logo");
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width(), rgba.height());
+                platform::spawn_tray(rgba.into_raw(), w, h);
+                Command::none()
+            }
+            Message::ToggleWindow => {
+                if state.is_shown() {
+                    state.hide()
+                } else {
+                    state.show()
+                }
+            }
+            Message::WindowClosed(id) => {
+                if state.window_id == Some(id) {
+                    state.window_id = None;
+                    platform::set_hook_active(false);
+                }
+                Command::none()
+            }
+            Message::SystemTheme(mode) => {
+                // iced reports `None` whenever a Wayland window opens because
+                // winit can't query the theme there; keep the last real value.
+                if mode != iced::theme::Mode::None {
+                    state.system_theme = mode;
+                }
+                Command::none()
+            }
+            #[cfg(not(target_os = "linux"))]
             Message::Setup(hwnd) => {
                 state.our_hwnd = Some(hwnd);
                 if hwnd != 0 {
@@ -341,54 +407,20 @@ impl Flemozi {
             Message::TitleBarClose => {
                 info!("TitleBarClose: disabling hook");
                 platform::set_hook_active(false);
-                let hwnd = state.our_hwnd.unwrap_or(0);
-                info!("TitleBarClose: hwnd={hwnd}");
-                if hwnd != 0 {
-                    info!("TitleBarClose: calling hide_window");
-                    unsafe { platform::hide_window(hwnd); }
-                    info!("TitleBarClose: hide_window returned");
-                }
-                Command::none()
+                state.hide()
             }
             Message::HotkeyPressed(_event) => {
                 if platform::is_hook_active() {
                     return Command::none();
                 }
-                info!("HotkeyPressed: capturing foreground window");
-                state.last_foreground = Some(platform::foreground_window());
-                info!("HotkeyPressed: activating hook");
-                platform::set_hook_active(true);
-                let hwnd = state.our_hwnd.unwrap_or(0);
-                info!("HotkeyPressed: hwnd={hwnd}");
-                if hwnd != 0 {
-                    let (cx, cy) = platform::get_cursor_pos();
-                    info!("HotkeyPressed: cursor=({cx},{cy})");
-                    let (wx, wy) = platform::clamp_window_position(cx, cy, 500, 500);
-                    info!("HotkeyPressed: showing window at ({wx},{wy})");
-                    unsafe { platform::show_no_activate(hwnd, wx, wy); }
-                    info!("HotkeyPressed: show_no_activate returned");
-                }
-                Command::none()
+                state.show()
             }
             Message::MenuActivated(event) => {
                 info!("MenuActivated: id={}", event.id().0);
                 if event.id().0 == "exit" {
-                    if let Some(id) = state.window_id {
-                        window::close::<Message>(id)
-                    } else {
-                        Command::none()
-                    }
+                    state.exit()
                 } else if event.id().0 == "show-window" {
-                    state.last_foreground = Some(platform::foreground_window());
-                    platform::set_hook_active(true);
-                    let hwnd = state.our_hwnd.unwrap_or(0);
-                    if hwnd != 0 {
-                        let (cx, cy) = platform::get_cursor_pos();
-                        let (wx, wy) = platform::clamp_window_position(cx, cy, 500, 500);
-                        info!("MenuActivated: showing window at ({wx},{wy})");
-                        unsafe { platform::show_no_activate(hwnd, wx, wy); }
-                    }
-                    Command::none()
+                    state.show()
                 } else {
                     Command::none()
                 }
@@ -730,11 +762,7 @@ impl Flemozi {
                     platform::HookKey::Escape => {
                         if state.query.is_empty() {
                             platform::set_hook_active(false);
-                            let hwnd = state.our_hwnd.unwrap_or(0);
-                            if hwnd != 0 {
-                                unsafe { platform::hide_window(hwnd); }
-                            }
-                            return Command::none();
+                            return state.hide();
                         } else {
                             state.query.clear();
                             state.cursor = 0;
@@ -786,13 +814,49 @@ impl Flemozi {
         main_view(state)
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
+        self.view()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn title_window(&self, _id: window::Id) -> String {
+        self.title()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn theme_window(&self, _id: window::Id) -> Option<iced::Theme> {
+        let Flemozi::Loaded(state) = self;
+        match state.system_theme {
+            iced::theme::Mode::None => None,
+            mode => Some(<iced::Theme as iced::theme::Base>::default(mode)),
+        }
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             window::close_requests().map(|_id| Message::TitleBarClose),
             titlebar_drag_subscription(),
             Subscription::run(external_events),
+            #[cfg(target_os = "linux")]
+            linux_keyboard_subscription(),
+            #[cfg(target_os = "linux")]
+            window::close_events().map(Message::WindowClosed),
+            #[cfg(target_os = "linux")]
+            iced::system::theme_changes().map(Message::SystemTheme),
         ])
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_keyboard_subscription() -> Subscription<Message> {
+    event::listen_with(|event, _status, _window| match event {
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key, text, modifiers, ..
+        }) => platform::hook_event_from_iced(&key, text.as_deref(), modifiers)
+            .map(Message::HookKeyEvent),
+        _ => None,
+    })
 }
 
 fn cursor_pos() -> Option<Point> {
@@ -845,6 +909,16 @@ fn external_events() -> impl iced::futures::Stream<Item = Message> {
                 info!("external_events: hook key received");
                 if output.try_send(Message::HookKeyEvent(key)).is_err() {
                     warn!("Hook key channel closed");
+                }
+            }
+            #[cfg(target_os = "linux")]
+            while let Some(cmd) = platform::try_recv_ipc() {
+                let msg = match cmd.as_str() {
+                    "toggle" => Message::ToggleWindow,
+                    _ => Message::MenuActivated(MenuEvent { id: MenuId::new("show-window") }),
+                };
+                if output.try_send(msg).is_err() {
+                    warn!("IPC event channel closed");
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(4)).await;
@@ -1051,13 +1125,12 @@ impl State {
         self.copied = Some(text.clone());
 
         if self.tab == Tab::Gifs {
-            let hwnd = self.our_hwnd.unwrap_or(0);
-            if hwnd != 0 {
-                unsafe { platform::hide_window(hwnd); }
+            let hide = self.hide();
+            if self.is_hidden_or_linux() {
                 if let Some(entry) = self.gif.entries.get(self.gif.selected) {
                     if !entry.gif_url.is_empty() {
                         let url = entry.gif_url.clone();
-                        return Command::perform(
+                        return hide.chain(Command::perform(
                             async move {
                                 let bytes = crate::tabs::gif::download_image(url).await;
                                 bytes
@@ -1069,23 +1142,96 @@ impl State {
                                     Message::GifPaste(bytes)
                                 }
                             },
-                        );
+                        ));
                     }
                 }
             }
-            return Command::none();
+            return hide;
         }
 
-        if let Some(_id) = self.window_id {
-            let hwnd = self.our_hwnd.unwrap_or(0);
-            if hwnd != 0 {
-                unsafe { platform::hide_window(hwnd); }
-            }
-            Command::future(async move {
+        if self.has_window() {
+            let hide = self.hide();
+            hide.chain(Command::future(async move {
                 Message::DoType(text)
-            })
+            }))
         } else {
             clipboard::write::<Message>(text)
+        }
+    }
+
+    fn has_window(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return true;
+        #[cfg(not(target_os = "linux"))]
+        return self.window_id.is_some();
+    }
+
+    /// Whether a native handle was available to hide the window (always on Linux).
+    fn is_hidden_or_linux(&self) -> bool {
+        cfg!(target_os = "linux") || self.our_hwnd.unwrap_or(0) != 0
+    }
+
+    #[allow(dead_code)]
+    fn is_shown(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.window_id.is_some();
+        #[cfg(not(target_os = "linux"))]
+        return platform::is_hook_active();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn show(&mut self) -> Command<Message> {
+        platform::set_hook_active(true);
+        if let Some(id) = self.window_id {
+            return window::gain_focus(id);
+        }
+        let (id, open) = window::open(crate::window_settings());
+        self.window_id = Some(id);
+        open.discard()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn show(&mut self) -> Command<Message> {
+        self.last_foreground = Some(platform::foreground_window());
+        platform::set_hook_active(true);
+        let hwnd = self.our_hwnd.unwrap_or(0);
+        if hwnd != 0 {
+            let (cx, cy) = platform::get_cursor_pos();
+            let (wx, wy) = platform::clamp_window_position(cx, cy, 500, 500);
+            info!("show: showing window at ({wx},{wy})");
+            unsafe { platform::show_no_activate(hwnd, wx, wy); }
+        }
+        Command::none()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn hide(&mut self) -> Command<Message> {
+        platform::set_hook_active(false);
+        match self.window_id.take() {
+            Some(id) => window::close(id),
+            None => Command::none(),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn hide(&mut self) -> Command<Message> {
+        let hwnd = self.our_hwnd.unwrap_or(0);
+        if hwnd != 0 {
+            unsafe { platform::hide_window(hwnd); }
+        }
+        Command::none()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn exit(&mut self) -> Command<Message> {
+        iced::exit()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn exit(&mut self) -> Command<Message> {
+        match self.window_id {
+            Some(id) => window::close(id),
+            None => Command::none(),
         }
     }
 }
