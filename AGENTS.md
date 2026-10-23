@@ -1,94 +1,59 @@
-# Flemozi
+# Flemozi (Arch Linux fork)
 
-Rust + [iced] v0.14 desktop emoji picker. **Windows, macOS & Linux**.
-**Not Flutter** (README is stale).
+Rust + [iced] 0.14 emoji / emoticon / GIF picker. Fork whose purpose is Linux
+(Arch) support; Windows/macOS code from upstream is kept but not built or
+tested here. **Not Flutter** — ignore the Flutter-era `Makefile` and
+`CHANGELOG.md`.
 
-## Build & Run
-
-```sh
-cargo build          # debug
-cargo run            # run
-cargo build --release
-```
-
-Edition 2024 → Rust ≥1.85. No tests, no CI, no linter/formatter config.
-
-## Build-time codegen
-
-`build.rs` scans `assets/twemoji/*.png`, generates `OUT_DIR/twemoji_stems.rs`
-(embedded via `include!` in `src/twemoji_stems.rs`). Twemoji PNGs must be present.
-
-Also reads `.env` at build time to embed obfuscated API keys (XOR-encrypted) into
-the binary via `OUT_DIR/env_vars.rs`.
-
-## App icon
-
-`winres` in `build.rs` embeds `assets/icon.ico` into the `.exe` (Windows only).
-
-## Arch Linux package
+## Build & install (Arch)
 
 ```sh
-cd packaging/arch && makepkg -si
+packaging/arch/build-and-install.sh            # deps, makepkg, sudo pacman -U
+packaging/arch/build-and-install.sh --no-install
+cargo build / cargo run                         # dev
 ```
 
-On Wayland there is no global hotkey: bind `flemozi --toggle` in the desktop's
-shortcut settings.
+- `packaging/arch/PKGBUILD` builds from the local checkout (not a git source);
+  `pkgver` comes from `Cargo.toml`. Installs the binary, `packaging/linux/flemozi.desktop`,
+  icons and license.
+- Edition 2024 → Rust ≥1.85. No tests, no CI, no linter/formatter config.
 
-## Installer
+## `.env` / API key
 
-`cargo-packager` builds an NSIS installer:
+`build.rs` reads `.env` and embeds values XOR-obfuscated via
+`OUT_DIR/env_vars.rs`. Only `KLIPY_API_KEY` is used (GIF tab, Klipy API
+`https://api.klipy.com/api/v1/{key}/gifs/{trending,search}`); the
+`KLIPY_API_KEY` env var is a runtime fallback. `.env` is gitignored — never commit it.
 
-```sh
-cargo install cargo-packager --locked
-cargo packager --release
-```
+## Linux design (`src/linux.rs`)
 
-Output: `target/release/flemozi_*_x64-setup.exe`
+Wayland forbids global key hooks, global hotkeys, window positioning and
+re-showing hidden windows, so on Linux:
 
-## Release via CI
-
-Trigger the "Flemozi Release Binary" workflow in GitHub Actions with:
-- `version`: semver (e.g. `0.1.1`)
-- `channel`: `stable` or `nightly`
-- `dry_run`: `true` to test without uploading
-
-Secrets `DOTENV_RELEASE` / `DOTENV_NIGHTLY` must contain the full `.env` file
-(e.g. `KLIPY_API_KEY=xxx`).
-
-## `.env`
-
-`.env` holds `KLIPY_API_KEY` (GIF tab, https://partner.klipy.com). It is
-embedded at build time; at runtime the `KLIPY_API_KEY` env var is a fallback.
+- The app is an `iced::daemon`; "show" opens a window, "hide" closes it.
+- Keys come from iced keyboard events, mapped to the same `HookKeyEvent` the
+  Win/mac hooks produce, so `app.rs` key handling is shared.
+- Single instance via Unix socket `$XDG_RUNTIME_DIR/flemozi-$USER.sock`;
+  `flemozi --toggle` / `--show` signal the running instance. Users bind
+  `--toggle` in their DE shortcut settings. `global-hotkey` still registers
+  (works on X11 only).
+- Tray: `tray-icon` with `gtk` feature on its own thread running `gtk::main()`.
+- Paste: clipboard via `arboard` (kept alive in a static, required on Linux),
+  then best-effort Ctrl+V via `ydotool` / `wtype` / `xdotool`.
+- Theme: iced resets the system theme to `None` when a Wayland window opens;
+  `State::system_theme` keeps the last real value from `system::theme_changes()`.
+- Config: `$XDG_CONFIG_HOME/flemozi/config.json`; autostart via
+  `~/.config/autostart/flemozi.desktop` (`--hidden`).
 
 ## Architecture
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Entrypoint: iced app builder |
-| `src/app.rs` | State, messages, update & subscription logic |
-| `src/ui/` | Widgets (grid, preview, styles) |
-| `src/win32.rs` | Windows FFI: hook, window mgmt, clipboard paste |
-| `src/linux.rs` | Linux: iced-driven keys, `--toggle` IPC socket, GTK tray thread, clipboard + ydotool/wtype/xdotool paste |
-| `src/macos.rs` | macOS FFI: CGEvent tap, NSWindow mgmt, clipboard paste |
-| `src/search.rs` | Simple substring/tag matching |
-| `src/emoji.rs` | EmojiEntry → Twemoji image resolution |
-| `src/assets/emojis.rs` | Static ~3000-entry emoji dataset (codegen from gemoji) |
-
-## Key dependencies
-
-- `iced` 0.14 with `iced::grid(AspectRatio(1.0))`, `window::Id`, `window::run`
-- `global-hotkey` 0.8 — registers Ctrl+Alt+.
-- `tray-icon` 0.24 — system tray with Show/Exit menu
-- `arboard` 3 — clipboard save/restore around `SendInput` Ctrl+V
-- `windows` 0.62 — `WH_KEYBOARD_LL`, `SetWindowPos`, `ShowWindow` (Windows)
-- `core-graphics` + `objc2` — CGEvent tap, NSWindow, Cmd+V paste (macOS)
-- Direct `CGEventTap` (no `rdev`) — keyboard hook on macOS; US-QWERTY keycode mapping
-- Twemoji images rendered via `iced::widget::image`
-
-## Dev notes
-
-- `cargo build` must be run at the repo root (no monorepo config, no workspace).
-- No snapshot or fixture tests. No integration test runner.
-- Hotkey hook requires admin elevation on some Windows configs.
-- On macOS, Accessibility permission must be granted for keyboard hook.
-- `window_size` suggestion in Cargo.toml is `(500.0, 500.0)`.
+| `src/main.rs` | Entrypoint; Linux CLI/IPC + `iced::daemon`, else `iced::application` |
+| `src/app.rs` | State, messages, update & subscriptions (`show`/`hide` per platform) |
+| `src/linux.rs` | Linux backend (see above) |
+| `src/win32.rs` / `src/macos.rs` | Upstream Windows / macOS backends |
+| `src/config.rs` | Config load/save, launch-at-startup |
+| `src/tabs/` | Emoji, emoticon, GIF (Klipy) and settings tabs |
+| `src/ui.rs`, `src/ui/` | Views and styles |
+| `src/assets/emojis.rs` | Static emoji dataset; rendered with embedded `assets/NotoColorEmoji.ttf` |

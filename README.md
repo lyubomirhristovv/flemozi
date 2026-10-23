@@ -1,87 +1,85 @@
-<p align="center"><img width="200" src="assets/logo.png"></p>
-<h1 align="center">Flemozi</h1>
+<p align="center"><img width="160" src="assets/logo.png"></p>
+<h1 align="center">Flemozi for Arch Linux</h1>
 
 <p align="center">
-    A simple✨, fast⚡ and lightweight🪶 emoji picker for desktop operating systems🫶
-    <br>
-    Available for Linux🐧, Windows🪟 and macOS🍎.
+  A fast, lightweight emoji, emoticon and GIF picker — packaged for Arch Linux.
 </p>
 
-## Highlights🚀
+This is a fork of [KRTirtho/flemozi](https://github.com/KRTirtho/flemozi) (the
+Rust/[iced](https://iced.rs/) rewrite) that adds a Linux backend and a local
+Arch package. The `flemozi` package on the AUR builds the old Flutter version
+and no longer builds.
 
-- Not Electron based🙃
-- Configurable Global🪩 shortcut🩳✂️ to open the emoji picker
-- Launches on system startup, runs in the background and can invoked from anywhere👻
-- Supports GIFs📼, stickers🎟️ and ASCII emojis👴 too
-- Copies the selected emoji to the clipboard📋 and automatically closes the picker obviously🤦‍♂️
+Tested on CachyOS / KDE Plasma (Wayland).
 
-## Installation📦
+![Screenshot](assets/screenshots/one.png)
 
-<!-- Table listing all the available downloads -->
+## Build & install
 
-| Linux                                                                   | Windows                                                       | macOS                                               |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
-| [AppImage⚙️][AppImage]                                                   | [exe🪟][exe]                                                   | [DMG💿][dmg]                                         |
-| [Debian🍥/Ubuntu⭕][deb]                                                | WinGet🪟🌈 <br>`winget install KRTirtho.flemozi` | Homebrew🍺 (Soon)<!-- <br>`brew install flemozi` --> |
-| [Fedora🎩/OpenSuse🦎][rpm]                                              | Chocolatey🍫 (Soon)<!-- <br>`choco install flemozi`  -->       |                                                     |
-| [Tarball][tar]                                                          |                                                               |                                                     |
-| [Flatpak📦][Flatpak] <br>`flatpak install dev.krtirtho.Flemozi`                    |                                                               |                                                     |
-| [AUR🌁][AUR] <br>`yay -S flemozi`                                       |                                                               |                                                     |
-
-## Sponsor☕💘
-
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/krtirtho)
-<a href="https://patreon.com/krtirtho"><img src="https://user-images.githubusercontent.com/61944859/180249027-678b01b8-c336-451e-b147-6d84a5b9d0e7.png" width="250"/></a>
-
-## Screenshots
-![One](/assets/screenshots/one.png)
-![Two](/assets/screenshots/two.png)
-![Three](/assets/screenshots/three.png)
-
-## Contributing🤝
-
-Contributions are always welcome! Please read the [contribution guidelines](CONTRIBUTING.md) first.
-
-## Building from source🛠️
-
-#### Prerequisites📋
-
-- Rust 1.85+ (edition 2024)
-
-#### Building🏗️
-
-```bash
-$ git clone https://github.com/KRTirtho/flemozi.git
-$ cd flemozi
-$ cargo build --release
+```sh
+git clone https://github.com/lyubomirhristovv/flemozi.git
+cd flemozi
+echo 'KLIPY_API_KEY=<your key>' > .env   # optional, enables the GIF tab
+packaging/arch/build-and-install.sh
 ```
 
-Twemoji PNGs must exist in `assets/twemoji/` for the build-time codegen step.
+The script installs missing build dependencies (`base-devel`, `rustup`, `gtk3`,
+`libayatana-appindicator`, …), builds the package with `makepkg`, and installs
+it with `sudo pacman -U`. If Flemozi is running, it is restarted.
 
-Built with [Iced](https://iced.rs/), a cross-platform GUI library for Rust.
+| Option         | Effect                                        |
+| -------------- | --------------------------------------------- |
+| `--no-install` | Only build; package lands in `packaging/arch/` |
+| `--clean`      | Discard cached build output (full rebuild)    |
 
-## Credits🙇
+To update, `git pull` and run the script again. To uninstall:
+`sudo pacman -R flemozi`.
 
-- Kingkor Roy Tirtho (Developer) [@KRTirtho](https://github.com/KRTirtho)
+### GIF API key
 
-## Acknowledgements🙏
+The GIF tab uses [Klipy](https://klipy.com). Create a free app key at
+<https://partner.klipy.com> and put it in `.env` **before building** — it is
+embedded into the binary. Alternatively export `KLIPY_API_KEY` at runtime.
+`.env` is gitignored.
 
-- [Twitter Emoji (Twemoji)](https://twemoji.twitter.com/)
+## Usage
 
+- Launch **Flemozi** from the app menu, or run `flemozi`. It lives in the tray.
+- **Shortcut:** Wayland does not allow apps to grab global hotkeys. In
+  *System Settings → Keyboard → Shortcuts → Add New → Command*, add
+  `flemozi --toggle` and bind it (e.g. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>.</kbd>).
+  On X11 the built-in shortcut (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>.</kbd>) also works.
+- Type to search, arrow keys to move, <kbd>Enter</kbd> to pick, <kbd>Esc</kbd> to close.
+- The pick is copied to the clipboard. For automatic pasting into the previous
+  window install one of:
+  - `ydotool` (Wayland, any compositor; needs `ydotoold` running), or
+  - `wtype` (wlroots compositors), or
+  - `xdotool` (X11).
 
-## License📜
+  Otherwise just press <kbd>Ctrl</kbd>+<kbd>V</kbd>.
+- **Settings → Launch at startup** writes `~/.config/autostart/flemozi.desktop`
+  (starts hidden in the tray).
+- Follows the system light/dark theme.
 
-This project is licensed under the [GPLv3](LICENSE) license.
+| CLI flag   | Effect                                         |
+| ---------- | ---------------------------------------------- |
+| `--toggle` | Show/hide the picker of the running instance   |
+| `--show`   | Show the picker (default when already running) |
+| `--hidden` | Start in the tray without opening the picker   |
 
-<pre align="center">
-  Copyright© 2023 Kingkor Roy Tirtho
-</pre>
+Config: `~/.config/flemozi/config.json`.
 
-[AppImage]: https://github.com/KRTirtho/flemozi/releases/latest/download/Flemozi-linux-x86_64.AppImage
-[tar]: https://github.com/KRTirtho/flemozi/releases/latest
-[deb]: https://github.com/KRTirtho/flemozi/releases/latest/download/Flemozi-linux-x86_64.deb
-[rpm]: https://github.com/KRTirtho/flemozi/releases/latest/download/Flemozi-linux-x86_64.rpm
-[exe]: https://github.com/KRTirtho/flemozi/releases/latest/download/Flemozi-windows-x86_64-setup.exe
-[dmg]: https://github.com/KRTirtho/flemozi/releases/latest/download/Flemozi-macos-universal.dmg
-[AUR]: https://aur.archlinux.org/packages/flemozi
-[Flatpak]: https://flathub.org/apps/dev.krtirtho.Flemozi
+## Development
+
+```sh
+cargo run      # debug build; needs the same deps as above
+```
+
+See [AGENTS.md](AGENTS.md) for architecture notes.
+
+## Credits & license
+
+Original app by Kingkor Roy Tirtho ([@KRTirtho](https://github.com/KRTirtho)).
+Emoji rendering uses [Noto Color Emoji](https://github.com/googlefonts/noto-emoji).
+
+Licensed under the [GPLv3](LICENSE).
