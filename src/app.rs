@@ -281,7 +281,6 @@ impl Flemozi {
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    state.font_loaded = false;
                     state.font_loading = false;
                 }
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -366,6 +365,11 @@ impl Flemozi {
                 if generation != state.gif.thumbnail_generation
                     || state.gif.entries.get(index).is_none()
                 {
+                    drop(result);
+                    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                    if state.window_id.is_none() {
+                        platform::trim_allocator();
+                    }
                     return Command::none();
                 }
                 match result {
@@ -418,6 +422,11 @@ impl Flemozi {
                 if generation != state.gif.thumbnail_generation
                     || state.gif.entries.get(index).is_none()
                 {
+                    drop(result);
+                    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                    if state.window_id.is_none() {
+                        platform::trim_allocator();
+                    }
                     return Command::none();
                 }
                 state.gif.loading_frames.remove(&index);
