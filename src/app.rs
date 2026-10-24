@@ -86,6 +86,7 @@ pub struct State {
     pub tab: Tab,
     pub window_id: Option<window::Id>,
     pub our_hwnd: Option<isize>,
+    #[cfg(not(target_os = "linux"))]
     pub last_foreground: Option<isize>,
     #[allow(dead_code)]
     pub system_theme: iced::theme::Mode,
@@ -106,7 +107,11 @@ pub enum Message {
     TitleBarClose,
     HotkeyPressed(GlobalHotKeyEvent),
     MenuActivated(MenuEvent),
+    #[cfg(not(target_os = "linux"))]
     Init(Option<window::Id>),
+    #[cfg(target_os = "linux")]
+    Setup,
+    #[cfg(not(target_os = "linux"))]
     Setup(isize),
     DoType(String),
     HookKeyEvent(HookKeyEvent),
@@ -152,6 +157,7 @@ impl Flemozi {
             tab: Tab::Emojis,
             window_id: None,
             our_hwnd: None,
+            #[cfg(not(target_os = "linux"))]
             last_foreground: None,
             system_theme: iced::theme::Mode::None,
         };
@@ -160,7 +166,7 @@ impl Flemozi {
         let cmd = window::latest().map(Message::Init);
         #[cfg(target_os = "linux")]
         let cmd = {
-            let setup = Command::done(Message::Setup(0));
+            let setup = Command::done(Message::Setup);
             let theme = iced::system::theme().map(Message::SystemTheme);
             let setup = Command::batch([theme, setup]);
             if START_HIDDEN.load(std::sync::atomic::Ordering::SeqCst) {
@@ -183,6 +189,7 @@ impl Flemozi {
         let Flemozi::Loaded(state) = self;
 
         match message {
+            #[cfg(not(target_os = "linux"))]
             Message::Init(id) => {
                 state.window_id = id;
                 if let Some(wid) = id {
@@ -212,7 +219,7 @@ impl Flemozi {
                 Command::none()
             }
             #[cfg(target_os = "linux")]
-            Message::Setup(_) => {
+            Message::Setup => {
                 state.register_hotkey();
                 let img = image::load_from_memory(LOGO_BYTES).expect("Failed to load logo");
                 let rgba = img.to_rgba8();

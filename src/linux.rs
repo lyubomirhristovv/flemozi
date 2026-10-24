@@ -180,6 +180,7 @@ pub fn spawn_tray(icon_rgba: Vec<u8>, width: u32, height: u32) {
             return;
         };
         match TrayIconBuilder::new()
+            .with_id("flemozi")
             .with_icon(icon)
             .with_tooltip("Flemozi")
             .with_menu(Box::new(menu))
