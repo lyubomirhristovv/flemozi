@@ -354,7 +354,7 @@ fn gif_cell(state: &State, i: usize) -> Element<'_, Message> {
             .height(Fill)
             .content_fit(ContentFit::Contain)
             .into()
-    } else if is_visible {
+    } else {
         text("GIF")
             .size(10)
             .width(Fill)
@@ -363,8 +363,6 @@ fn gif_cell(state: &State, i: usize) -> Element<'_, Message> {
             .align_y(Center)
             .style(subtle)
             .into()
-    } else {
-        space().into()
     };
 
     let btn = button(cell)
@@ -389,6 +387,7 @@ fn gif_cell(state: &State, i: usize) -> Element<'_, Message> {
 
     sensor(styled)
         .key(i)
+        .anticipate(200)
         .on_show(move |_| Message::Shown(i))
         .into()
 }
