@@ -199,18 +199,34 @@ struct KlipyMedia {
 
 // ── HTTP helpers ──
 
-fn api_key() -> Result<String, String> {
-    crate::env::klipy_api_key()
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "KLIPY_API_KEY not set (add it to .env before building, or export it)".to_string())
+fn resolve_api_key(
+    configured_key: &str,
+    environment_key: Option<String>,
+) -> Result<String, String> {
+    let configured_key = configured_key.trim();
+    let key = if configured_key.is_empty() {
+        environment_key
+    } else {
+        Some(configured_key.to_owned())
+    };
+
+    key.map(|key| key.trim().to_owned())
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| {
+            "Add your Klipy API key in Settings or set KLIPY_API_KEY in the environment".to_string()
+        })
 }
 
 fn format_gif_url(f: &Option<KlipyFormats>) -> Option<String> {
     f.as_ref()?.gif.as_ref().map(|m| m.url.clone()).filter(|u| !u.is_empty())
 }
 
-async fn get(path: &str, params: &[(&str, &str)]) -> Result<Vec<GifEntry>, String> {
-    let key = api_key()?;
+async fn get(
+    path: &str,
+    params: &[(&str, &str)],
+    configured_key: &str,
+) -> Result<Vec<GifEntry>, String> {
+    let key = resolve_api_key(configured_key, crate::env::klipy_api_key())?;
     let url = reqwest::Url::parse_with_params(&format!("{API_BASE}/{key}/gifs{path}"), params)
         .map_err(|e| format!("invalid URL: {e}"))?;
 
@@ -279,18 +295,23 @@ pub async fn download_image(url: String) -> Result<Vec<u8>, String> {
     Ok(bytes.to_vec())
 }
 
-pub async fn fetch_trending_gifs() -> Result<Vec<GifEntry>, String> {
-    let result = get("/trending", &[("per_page", "50"), ("page", "1")]).await;
+pub async fn fetch_trending_gifs(configured_key: String) -> Result<Vec<GifEntry>, String> {
+    let result = get(
+        "/trending",
+        &[("per_page", "50"), ("page", "1")],
+        &configured_key,
+    )
+    .await;
     if let Err(ref e) = result {
         tracing::error!("Klipy trending failed: {e}");
     }
     result
 }
 
-pub async fn search_gifs(query: String) -> Result<Vec<GifEntry>, String> {
+pub async fn search_gifs(query: String, configured_key: String) -> Result<Vec<GifEntry>, String> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
-        return fetch_trending_gifs().await;
+        return fetch_trending_gifs(configured_key).await;
     }
     let result = get(
         "/search",
@@ -301,6 +322,7 @@ pub async fn search_gifs(query: String) -> Result<Vec<GifEntry>, String> {
             ("rating", "pg"),
             ("locale", "en"),
         ],
+        &configured_key,
     )
     .await;
     if let Err(ref e) = result {
@@ -312,6 +334,28 @@ pub async fn search_gifs(query: String) -> Result<Vec<GifEntry>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_api_key_takes_precedence_over_environment() {
+        let key = resolve_api_key(" configured-key ", Some("environment-key".to_string()))
+            .unwrap();
+
+        assert_eq!(key, "configured-key");
+    }
+
+    #[test]
+    fn environment_api_key_is_used_as_fallback() {
+        let key = resolve_api_key("", Some("environment-key".to_string())).unwrap();
+
+        assert_eq!(key, "environment-key");
+    }
+
+    #[test]
+    fn missing_api_key_explains_settings_configuration() {
+        let error = resolve_api_key(" ", None).unwrap_err();
+
+        assert!(error.contains("Settings"));
+    }
 
     fn make_gif(frame_count: usize, width: u32, height: u32) -> Vec<u8> {
         let mut bytes = Vec::new();

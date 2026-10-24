@@ -7,7 +7,6 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-root="$(cd "$script_dir/../.." && pwd)"
 
 install=1
 clean=0
@@ -39,17 +38,6 @@ fi
 if command -v rustup &>/dev/null && ! rustup default &>/dev/null; then
     echo "==> No default Rust toolchain; installing stable"
     rustup default stable
-fi
-
-# ── GIF API key ──
-if ! grep -qs '^KLIPY_API_KEY=.\+' "$root/.env" && [[ -z "${KLIPY_API_KEY:-}" ]]; then
-    echo "==> WARNING: KLIPY_API_KEY not found in $root/.env — the GIF tab will not work." >&2
-    echo "    Get a free key at https://partner.klipy.com and add: KLIPY_API_KEY=<key>" >&2
-elif [[ -n "${KLIPY_API_KEY:-}" ]] && ! grep -qs '^KLIPY_API_KEY=.\+' "$root/.env"; then
-    # build.rs only embeds keys from .env.
-    echo "==> Writing KLIPY_API_KEY from environment to .env"
-    printf 'KLIPY_API_KEY=%s\n' "$KLIPY_API_KEY" >> "$root/.env"
-    chmod 600 "$root/.env"
 fi
 
 # ── build ──

@@ -78,6 +78,7 @@ pub struct State {
     pub selection: Option<(usize, usize)>,
     pub search_focused: bool,
     pub config: Config,
+    pub settings_status: Option<String>,
     pub capturing_shortcut: bool,
     pub copied: Option<String>,
     pub emoji: EmojiTab,
@@ -122,6 +123,8 @@ pub enum Message {
     HookKeyEvent(HookKeyEvent),
     ToggleLaunchAtStartup,
     ToggleCaptureShortcut,
+    KlipyApiKeyChanged(String),
+    SaveKlipyApiKey,
     GifFetched(Result<Vec<crate::tabs::gif::GifEntry>, String>),
     GifSearchResult(Result<Vec<crate::tabs::gif::GifEntry>, String>),
     GifSearchDebounce(String),
@@ -183,6 +186,7 @@ impl Flemozi {
             selection: None,
             search_focused: true,
             config,
+            settings_status: None,
             capturing_shortcut: false,
             copied: None,
             emoji: EmojiTab::new(),
@@ -355,7 +359,7 @@ impl Flemozi {
             Message::GifSearchDebounce(query) => {
                 if state.query == query {
                     return Command::perform(
-                        crate::tabs::gif::search_gifs(query),
+                        crate::tabs::gif::search_gifs(query, state.config.klipy_api_key.clone()),
                         Message::GifSearchResult,
                     );
                 }
@@ -507,7 +511,10 @@ impl Flemozi {
                         state.search_focused = state.gif.saved_search.search_focused;
                         if !state.query.is_empty() {
                             cmds.push(Command::perform(
-                                crate::tabs::gif::search_gifs(state.query.clone()),
+                                crate::tabs::gif::search_gifs(
+                                    state.query.clone(),
+                                    state.config.klipy_api_key.clone(),
+                                ),
                                 Message::GifSearchResult,
                             ));
                         } else if state.gif.entries.is_empty() {
@@ -515,7 +522,9 @@ impl Flemozi {
                                 cmds.push(handle_gif_result(state, Ok(entries)));
                             } else {
                                 cmds.push(Command::perform(
-                                    crate::tabs::gif::fetch_trending_gifs(),
+                                    crate::tabs::gif::fetch_trending_gifs(
+                                        state.config.klipy_api_key.clone(),
+                                    ),
                                     Message::GifFetched,
                                 ));
                             }
@@ -533,7 +542,26 @@ impl Flemozi {
             Message::ToggleLaunchAtStartup => {
                 state.config.launch_at_startup = !state.config.launch_at_startup;
                 state.config.apply_launch_at_startup();
-                state.config.save();
+                if let Err(error) = state.config.save() {
+                    warn!("Failed to save config: {error}");
+                }
+                Command::none()
+            }
+            Message::KlipyApiKeyChanged(key) => {
+                state.config.klipy_api_key = key;
+                state.settings_status = None;
+                Command::none()
+            }
+            Message::SaveKlipyApiKey => {
+                state.config.klipy_api_key = state.config.klipy_api_key.trim().to_owned();
+                state.settings_status = match state.config.save() {
+                    Ok(()) => Some("Klipy API key saved.".to_string()),
+                    Err(error) => {
+                        let message = format!("Failed to save settings: {error}");
+                        warn!("{message}");
+                        Some(message)
+                    }
+                };
                 Command::none()
             }
             Message::ToggleCaptureShortcut => {
@@ -667,7 +695,9 @@ impl Flemozi {
                             return handle_gif_result(state, Ok(entries));
                         }
                         return Command::perform(
-                            crate::tabs::gif::fetch_trending_gifs(),
+                            crate::tabs::gif::fetch_trending_gifs(
+                                state.config.klipy_api_key.clone(),
+                            ),
                             Message::GifFetched,
                         );
                     }
@@ -718,6 +748,10 @@ impl Flemozi {
                 Command::none()
             }
             Message::HookKeyEvent(ev) => {
+                if state.tab == Tab::Settings && !state.capturing_shortcut {
+                    return Command::none();
+                }
+
                 let HookKeyEvent { key, ctrl, shift, alt } = ev;
                 info!("HookKeyEvent: key={key:?} ctrl={ctrl} shift={shift} alt={alt}");
 
@@ -728,7 +762,9 @@ impl Flemozi {
                     state.config.shortcut_shift = shift;
                     state.config.shortcut_code = hookkey_to_code_name(&key);
                     state.register_hotkey();
-                    state.config.save();
+                    if let Err(error) = state.config.save() {
+                        warn!("Failed to save config: {error}");
+                    }
                     return Command::none();
                 }
 
@@ -947,7 +983,9 @@ impl Flemozi {
                                     return handle_gif_result(state, Ok(entries));
                                 }
                                 return Command::perform(
-                                    crate::tabs::gif::fetch_trending_gifs(),
+                                    crate::tabs::gif::fetch_trending_gifs(
+                                        state.config.klipy_api_key.clone(),
+                                    ),
                                     Message::GifFetched,
                                 );
                             }

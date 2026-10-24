@@ -46,7 +46,6 @@ app.*.map.json
 dist
 
 **/.env*
-!**/.env.example
 /lib/collections/env.g.dart
 
 # FVM Version Cache

@@ -1,14 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
     pub launch_at_startup: bool,
     pub shortcut_ctrl: bool,
     pub shortcut_alt: bool,
     pub shortcut_shift: bool,
     pub shortcut_code: String,
+    #[serde(default)]
+    pub klipy_api_key: String,
 }
 
 impl Default for Config {
@@ -19,6 +22,7 @@ impl Default for Config {
             shortcut_alt: true,
             shortcut_shift: false,
             shortcut_code: "Period".to_string(),
+            klipy_api_key: String::new(),
         }
     }
 }
@@ -43,14 +47,28 @@ impl Config {
             .unwrap_or_default()
     }
 
-    pub fn save(&self) {
+    pub fn save(&self) -> io::Result<()> {
         let path = Self::path();
         if let Some(dir) = path.parent() {
-            let _ = fs::create_dir_all(dir);
+            fs::create_dir_all(dir)?;
         }
-        if let Ok(s) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(&path, s);
+
+        let serialized = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
+        let mut options = fs::OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
+
+        let mut file = options.open(&path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(&serialized)
     }
 
     #[cfg(target_os = "linux")]
@@ -106,4 +124,25 @@ fn xdg_config_home() -> PathBuf {
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn missing_klipy_key_defaults_to_empty() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "launch_at_startup": false,
+                "shortcut_ctrl": true,
+                "shortcut_alt": true,
+                "shortcut_shift": false,
+                "shortcut_code": "Period"
+            }"#,
+        )
+        .unwrap();
+
+        assert!(config.klipy_api_key.is_empty());
+    }
 }

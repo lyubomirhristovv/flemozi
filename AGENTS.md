@@ -19,12 +19,12 @@ cargo build / cargo run                         # dev
 - Edition 2024 → Rust ≥1.85. No tests or linter/formatter config. GitHub Actions
   builds an x86_64 Arch package when a GitHub release is published.
 
-## `.env` / API key
+## Klipy API key
 
-`build.rs` reads `.env` and embeds values XOR-obfuscated via
-`OUT_DIR/env_vars.rs`. Only `KLIPY_API_KEY` is used (GIF tab, Klipy API
-`https://api.klipy.com/api/v1/{key}/gifs/{trending,search}`); the
-`KLIPY_API_KEY` env var is a runtime fallback. `.env` is gitignored — never commit it.
+The GIF tab uses the Klipy API
+`https://api.klipy.com/api/v1/{key}/gifs/{trending,search}`. Users enter the
+key in Settings; it is saved in the user config and is not embedded at build
+time. `KLIPY_API_KEY` is an optional runtime environment fallback.
 
 ## Linux design (`src/linux.rs`)
 

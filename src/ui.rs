@@ -2,7 +2,9 @@ mod grid;
 mod preview;
 mod styles;
 
-use iced::widget::{button, center, column, container, row, scrollable, sensor, space, text, toggler};
+use iced::widget::{
+    button, center, column, container, row, scrollable, sensor, space, text, text_input, toggler,
+};
 use iced::{Alignment, Center, Color, ContentFit, Element, Fill, border};
 
 use crate::app::{shortcut_display_name, Message, State, Tab, COLUMNS, SPACING};
@@ -516,6 +518,20 @@ fn settings_view(state: &State) -> Element<'_, Message> {
             .style(button::text)
             .padding(8)
     };
+    let klipy_key_input = text_input("Klipy API key", &state.config.klipy_api_key)
+        .secure(true)
+        .on_input(Message::KlipyApiKeyChanged)
+        .padding(8)
+        .width(Fill);
+    let save_key_btn = button(text("Save key").size(14))
+        .on_press(Message::SaveKlipyApiKey)
+        .style(button::text)
+        .padding(8);
+    let settings_status: Element<'_, Message> = state
+        .settings_status
+        .as_deref()
+        .map(|status| text(status).size(13).style(subtle).into())
+        .unwrap_or_else(|| space::vertical().height(0).into());
 
     container(
         column![
@@ -526,6 +542,15 @@ fn settings_view(state: &State) -> Element<'_, Message> {
             space::vertical().height(12),
             shortcut_header,
             row![shortcut_text, record_btn].spacing(8).align_y(Alignment::Center),
+            space::vertical().height(12),
+            text("Klipy API key").size(16),
+            text("Get a key at partner.klipy.com. Saved locally, not embedded in the app.")
+                .size(13)
+                .style(subtle),
+            row![klipy_key_input, save_key_btn]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            settings_status,
             space::vertical().height(12),
             text("Keyboard shortcuts:").size(16),
             text("  Escape      - Clear search (when empty, close)")

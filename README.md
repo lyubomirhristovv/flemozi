@@ -19,7 +19,6 @@ Tested on CachyOS / KDE Plasma (Wayland).
 ```sh
 git clone https://github.com/lyubomirhristovv/flemozi.git
 cd flemozi
-echo 'KLIPY_API_KEY=<your key>' > .env   # optional, enables the GIF tab
 packaging/arch/build-and-install.sh
 ```
 
@@ -52,9 +51,11 @@ Install the package from a newer release the same way to update. To uninstall:
 ### GIF API key
 
 The GIF tab uses [Klipy](https://klipy.com). Create a free app key at
-<https://partner.klipy.com> and put it in `.env` **before building** — it is
-embedded into the binary. Alternatively export `KLIPY_API_KEY` at runtime.
-`.env` is gitignored.
+<https://partner.klipy.com>, open **Settings**, paste it into the **Klipy API
+key** field, and select **Save key**. Flemozi stores it in the user's
+`config.json` as plain text, with owner-only file permissions on Unix; the key
+is not embedded in the executable. Alternatively, set `KLIPY_API_KEY` in
+Flemozi's runtime environment.
 
 ## Usage
 
