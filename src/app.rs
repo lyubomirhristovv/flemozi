@@ -104,7 +104,8 @@ pub enum Message {
     Shown(usize),
     TabSelected(Tab),
     TitleBarDrag,
-    TitleBarClose,
+    HideWindow,
+    WindowUnfocused(window::Id),
     HotkeyPressed(GlobalHotKeyEvent),
     MenuActivated(MenuEvent),
     #[cfg(not(target_os = "linux"))]
@@ -240,6 +241,14 @@ impl Flemozi {
                     platform::set_hook_active(false);
                 }
                 Command::none()
+            }
+            Message::WindowUnfocused(id) => {
+                if state.window_id == Some(id) {
+                    platform::set_hook_active(false);
+                    state.hide()
+                } else {
+                    Command::none()
+                }
             }
             Message::SystemTheme(mode) => {
                 // iced reports `None` whenever a Wayland window opens because
@@ -411,8 +420,8 @@ impl Flemozi {
                     Command::none()
                 }
             }
-            Message::TitleBarClose => {
-                info!("TitleBarClose: disabling hook");
+            Message::HideWindow => {
+                info!("HideWindow: disabling hook");
                 platform::set_hook_active(false);
                 state.hide()
             }
@@ -842,7 +851,13 @@ impl Flemozi {
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
-            window::close_requests().map(|_id| Message::TitleBarClose),
+            window::close_requests().map(|_id| Message::HideWindow),
+            event::listen_with(|event, _status, id| match event {
+                iced::Event::Window(window::Event::Unfocused) => {
+                    Some(Message::WindowUnfocused(id))
+                }
+                _ => None,
+            }),
             titlebar_drag_subscription(),
             Subscription::run(external_events),
             #[cfg(target_os = "linux")]
@@ -884,7 +899,7 @@ fn titlebar_drag_subscription() -> Subscription<Message> {
         }
         iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
             if let Some(pos) = cursor_pos() {
-                if pos.y > 0.0 && pos.y < 22.0 && pos.x < 460.0 {
+                if pos.y > 0.0 && pos.y < 22.0 {
                     return Some(Message::TitleBarDrag);
                 }
             }
@@ -1144,7 +1159,7 @@ impl State {
                             },
                             |bytes| {
                                 if bytes.is_empty() {
-                                    Message::TitleBarClose
+                                    Message::HideWindow
                                 } else {
                                     Message::GifPaste(bytes)
                                 }

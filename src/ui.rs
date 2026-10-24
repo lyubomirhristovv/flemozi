@@ -35,15 +35,9 @@ pub fn main_view(state: &State) -> Element<'_, Message> {
 }
 
 fn titlebar_view() -> Element<'static, Message> {
-    let close_btn = button(text("\u{00d7}").size(16))
-        .on_press(Message::TitleBarClose)
-        .style(button::text)
-        .padding(2);
-
     row![
         text("Flemozi").size(14),
         space::horizontal(),
-        close_btn,
     ]
     .padding([0, 8])
     .align_y(Alignment::Center)
