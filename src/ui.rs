@@ -536,7 +536,7 @@ fn settings_view(state: &State) -> Element<'_, Message> {
     container(
         column![
             text("Flemozi Emoji Picker").size(20),
-            text("Version 0.1.0").size(14).style(subtle),
+            text("Version 0.3.0").size(14).style(subtle),
             space::vertical().height(12),
             launch_toggle,
             space::vertical().height(12),
