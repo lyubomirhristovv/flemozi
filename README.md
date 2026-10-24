@@ -57,6 +57,10 @@ embedded into the binary. Alternatively export `KLIPY_API_KEY` at runtime.
   - `xdotool` (X11).
 
   Otherwise just press <kbd>Ctrl</kbd>+<kbd>V</kbd>.
+- **GIFs** are copied as a file (like copying it in Dolphin) plus raw
+  `image/gif` data, so chat apps attach the GIF instead of pasting a path.
+  Temporary files live in `/tmp/flemozi-$USER/` and are cleaned after an hour.
+  On X11 this needs `xclip`.
 - **Settings → Launch at startup** writes `~/.config/autostart/flemozi.desktop`
   (starts hidden in the tray).
 - Follows the system light/dark theme.

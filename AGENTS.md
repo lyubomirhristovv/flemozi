@@ -39,7 +39,9 @@ re-showing hidden windows, so on Linux:
   (works on X11 only).
 - Tray: `tray-icon` with `gtk` feature on its own thread running `gtk::main()`.
 - Paste: clipboard via `arboard` (kept alive in a static, required on Linux),
-  then best-effort Ctrl+V via `ydotool` / `wtype` / `xdotool`.
+  then best-effort Ctrl+V via `ydotool` / `wtype` / `xdotool`. GIFs go through
+  `wl-clipboard-rs` as `text/uri-list` + `x-special/gnome-copied-files` +
+  `image/gif` with **no** text/plain (else apps paste the path); X11 uses `xclip`.
 - Theme: iced resets the system theme to `None` when a Wayland window opens;
   `State::system_theme` keeps the last real value from `system::theme_changes()`.
 - Config: `$XDG_CONFIG_HOME/flemozi/config.json`; autostart via

@@ -271,20 +271,25 @@ pub unsafe fn paste_emoji(text: &str) {
     });
 }
 
+/// Puts the GIF on the clipboard the way file managers copy a file (uri-list)
+/// plus the raw `image/gif` bytes, with no plain-text fallback so apps can't
+/// paste the path as text.
 pub unsafe fn paste_gif_file(bytes: &[u8]) {
-    let path = std::env::temp_dir().join("flemozi_paste.gif");
-    if let Err(e) = std::fs::write(&path, bytes) {
-        error!("paste_gif_file: failed to write temp file: {e}");
-        return;
-    }
-    let uri = format!("file://{}", path.to_string_lossy());
+    let path = match write_temp_gif(bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("paste_gif_file: failed to write temp file: {e}");
+            return;
+        }
+    };
+    let uri = file_uri(&path);
+    let bytes = bytes.to_vec();
     std::thread::spawn(move || {
-        let ok = with_clipboard(|c| {
-            c.set()
-                .html(format!("<img src=\"{uri}\">"), Some(uri.clone()))
-        })
-        .and_then(|r| r.ok())
-        .is_some();
+        let ok = if is_wayland() {
+            set_gif_clipboard_wayland(&uri, bytes)
+        } else {
+            set_gif_clipboard_x11(&uri)
+        };
         if !ok {
             error!("paste_gif_file: failed to set clipboard");
             return;
@@ -292,4 +297,94 @@ pub unsafe fn paste_gif_file(bytes: &[u8]) {
         std::thread::sleep(Duration::from_millis(250));
         simulate_paste();
     });
+}
+
+fn set_gif_clipboard_wayland(uri: &str, gif: Vec<u8>) -> bool {
+    use wl_clipboard_rs::copy::{MimeSource, MimeType, Options, Source};
+
+    let mime = |data: Vec<u8>, ty: &str| MimeSource {
+        source: Source::Bytes(data.into_boxed_slice()),
+        mime_type: MimeType::Specific(ty.to_string()),
+    };
+    let sources = vec![
+        mime(format!("{uri}\r\n").into_bytes(), "text/uri-list"),
+        mime(format!("copy\n{uri}").into_bytes(), "x-special/gnome-copied-files"),
+        mime(gif, "image/gif"),
+    ];
+    let mut options = Options::new();
+    // text/uri-list counts as text, so the library would otherwise also offer
+    // text/plain with the path — exactly what apps then paste.
+    options.omit_additional_text_mime_types(true);
+    match options.copy_multi(sources) {
+        Ok(()) => true,
+        Err(e) => {
+            error!("set_gif_clipboard_wayland: {e}");
+            false
+        }
+    }
+}
+
+/// arboard can't offer custom MIME types on X11, so use xclip when present.
+fn set_gif_clipboard_x11(uri: &str) -> bool {
+    let child = Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", "text/uri-list"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match child {
+        Ok(mut child) => {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(format!("{uri}\r\n").as_bytes());
+            }
+            // xclip forks to serve the selection; the parent exits once stdin closes.
+            child.wait().map(|s| s.success()).unwrap_or(false)
+        }
+        Err(e) => {
+            error!("set_gif_clipboard_x11: xclip not available ({e}); install xclip to paste GIFs on X11");
+            false
+        }
+    }
+}
+
+/// Writes the GIF to a per-user temp dir under a unique name, so a paste that
+/// is still uploading isn't overwritten. Files older than an hour are removed.
+fn write_temp_gif(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let user = std::env::var("USER").unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("flemozi-{user}"));
+    std::fs::create_dir_all(&dir)?;
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let old = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > Duration::from_secs(3600));
+            if old {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let path = dir.join(format!("flemozi-{stamp}.gif"));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    let mut uri = String::from("file://");
+    for b in path.to_string_lossy().bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
 }

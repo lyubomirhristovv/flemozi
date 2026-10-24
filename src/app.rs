@@ -1179,12 +1179,45 @@ impl State {
         return platform::is_hook_active();
     }
 
+    /// Fresh session each time the picker opens: first tab, empty searches.
+    fn reset_session(&mut self) {
+        let gif_searched = !self.gif.saved_search.query.is_empty()
+            || (self.tab == Tab::Gifs && !self.query.is_empty());
+
+        self.tab = Tab::Emojis;
+        self.query.clear();
+        self.cursor = 0;
+        self.selection = None;
+        self.search_focused = true;
+        self.capturing_shortcut = false;
+        self.copied = None;
+
+        self.emoji.saved_search = SearchState::new();
+        self.emoji.reset_search();
+        self.emoticon.saved_search = SearchState::new();
+        self.emoticon.reset_search();
+
+        // Search results replaced the trending list; drop them so the GIF tab
+        // refetches trending when opened.
+        if gif_searched {
+            self.gif.entries.clear();
+            self.gif.filtered.clear();
+            self.gif.frames.clear();
+            self.gif.loading_frames.clear();
+            self.gif.visible.clear();
+            self.gif.loading = true;
+        }
+        self.gif.saved_search = SearchState::new();
+        self.gif.selected = self.gif.filtered.first().copied().unwrap_or(0);
+    }
+
     #[cfg(target_os = "linux")]
     fn show(&mut self) -> Command<Message> {
         platform::set_hook_active(true);
         if let Some(id) = self.window_id {
             return window::gain_focus(id);
         }
+        self.reset_session();
         let (id, open) = window::open(crate::window_settings());
         self.window_id = Some(id);
         open.discard()
@@ -1192,6 +1225,7 @@ impl State {
 
     #[cfg(not(target_os = "linux"))]
     fn show(&mut self) -> Command<Message> {
+        self.reset_session();
         self.last_foreground = Some(platform::foreground_window());
         platform::set_hook_active(true);
         let hwnd = self.our_hwnd.unwrap_or(0);

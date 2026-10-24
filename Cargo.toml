@@ -43,6 +43,7 @@ objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 tray-icon = { version = "0.24", default-features = false, features = ["gtk"] }
 gtk = "0.18"
+wl-clipboard-rs = "0.9"
 arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

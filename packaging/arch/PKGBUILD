@@ -2,7 +2,7 @@
 # Usage (from this directory): makepkg -si
 pkgname=flemozi
 pkgver=0.1.0
-pkgrel=2
+pkgrel=4
 pkgdesc='Emoji, emoticon and GIF picker (Rust/iced)'
 arch=('x86_64')
 url='https://github.com/lyubomirhristovv/flemozi'
@@ -11,7 +11,8 @@ depends=('gtk3' 'libayatana-appindicator' 'libxkbcommon' 'wayland' 'fontconfig')
 makedepends=('cargo')
 optdepends=('ydotool: auto-paste on Wayland (needs ydotoold running)'
             'wtype: auto-paste on wlroots compositors'
-            'xdotool: auto-paste on X11')
+            'xdotool: auto-paste on X11'
+            'xclip: GIF pasting on X11')
 options=('!lto' '!debug')
 
 _root="$(realpath "$startdir/../..")"

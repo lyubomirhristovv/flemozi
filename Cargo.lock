@@ -1230,6 +1230,7 @@ dependencies = [
  "tray-icon",
  "windows 0.62.2",
  "winres",
+ "wl-clipboard-rs",
 ]
 
 [[package]]
