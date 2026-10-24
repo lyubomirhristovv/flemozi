@@ -400,6 +400,22 @@ impl Flemozi {
                 Command::none()
             }
             Message::TabSelected(tab) => {
+                let mut cmds = Vec::new();
+                if state.tab != tab {
+                    let scroll_id = match tab {
+                        Tab::Emojis => Some(state.emoji.scroll_id.clone()),
+                        Tab::Emoticons => Some(state.emoticon.scroll_id.clone()),
+                        Tab::Gifs => Some(state.gif.scroll_id.clone()),
+                        Tab::Settings => None,
+                    };
+                    if let Some(scroll_id) = scroll_id {
+                        cmds.push(operation::scroll_to(
+                            scroll_id,
+                            scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+                        ));
+                    }
+                }
+
                 let s = &mut state.query;
                 let c = &mut state.cursor;
                 let sel = &mut state.selection;
@@ -449,18 +465,19 @@ impl Flemozi {
                         state.selection = state.gif.saved_search.selection;
                         state.search_focused = state.gif.saved_search.search_focused;
                         if !state.query.is_empty() {
-                            return Command::perform(
+                            cmds.push(Command::perform(
                                 crate::tabs::gif::search_gifs(state.query.clone()),
                                 Message::GifSearchResult,
-                            );
+                            ));
                         } else if state.gif.entries.is_empty() {
                             if let Some(entries) = state.gif.trending_cache.clone() {
-                                return handle_gif_result(state, Ok(entries));
+                                cmds.push(handle_gif_result(state, Ok(entries)));
+                            } else {
+                                cmds.push(Command::perform(
+                                    crate::tabs::gif::fetch_trending_gifs(),
+                                    Message::GifFetched,
+                                ));
                             }
-                            return Command::perform(
-                                crate::tabs::gif::fetch_trending_gifs(),
-                                Message::GifFetched,
-                            );
                         }
                     }
                     Tab::Settings => {
@@ -470,7 +487,7 @@ impl Flemozi {
                         state.search_focused = true;
                     }
                 }
-                Command::none()
+                Command::batch(cmds)
             }
             Message::ToggleLaunchAtStartup => {
                 state.config.launch_at_startup = !state.config.launch_at_startup;
