@@ -2,17 +2,15 @@
 <h1 align="center">Flemozi for Arch Linux</h1>
 
 <p align="center">
-  A fast, lightweight emoji, emoticon and GIF picker — packaged for Arch Linux.
+  A fast, lightweight emoji, emoticon and GIF picker — packaged for (Arch) Linux.
 </p>
 
-This is a fork of [KRTirtho/flemozi](https://github.com/KRTirtho/flemozi) (the
-Rust/[iced](https://iced.rs/) rewrite) that adds a Linux backend and a local
-Arch package. The `flemozi` package on the AUR builds the old Flutter version
-and no longer builds.
+This fork extends the functionality by adding a Linux backend, multiple quality of life upgrades and memory improvements to provide a fluent user interface with minimal system load.
 
 Tested on CachyOS / KDE Plasma (Wayland).
 
 ![Screenshot](assets/screenshots/one.png)
+![Screenshot](assets/screenshots/two.png)
 
 ## Build & install
 
