@@ -4,15 +4,11 @@ use iced::event;
 use iced::mouse;
 use iced::stream;
 use iced::widget::{operation, scrollable};
-use iced::{clipboard, window, Element, Point, Subscription, Task as Command};
+use iced::{window, Element, Point, Subscription, Task as Command};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 use tracing::{info, warn};
 use tray_icon::menu::{MenuEvent, MenuId};
-#[cfg(not(target_os = "linux"))]
-use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
-#[cfg(not(target_os = "linux"))]
-use tray_icon::TrayIconBuilder;
 
 use crate::config::Config;
 use crate::tabs::emoji::EmojiTab;
@@ -20,17 +16,10 @@ use crate::tabs::emoticon::EmoticonTab;
 use crate::tabs::gif::GifTab;
 use crate::ui::main_view;
 
-#[cfg(target_os = "windows")]
-use crate::win32::{self as platform, HookKeyEvent};
-#[cfg(target_os = "macos")]
-use crate::macos::{self as platform, HookKeyEvent};
-#[cfg(target_os = "linux")]
 use crate::linux::{self as platform, HookKeyEvent};
 
-#[cfg(target_os = "linux")]
 static START_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-#[cfg(target_os = "linux")]
 pub fn set_start_hidden(hidden: bool) {
     START_HIDDEN.store(hidden, std::sync::atomic::Ordering::SeqCst);
 }
@@ -86,10 +75,6 @@ pub struct State {
     pub gif: GifTab,
     pub tab: Tab,
     pub window_id: Option<window::Id>,
-    pub our_hwnd: Option<isize>,
-    #[cfg(not(target_os = "linux"))]
-    pub last_foreground: Option<isize>,
-    #[allow(dead_code)]
     pub system_theme: iced::theme::Mode,
     font_loaded: bool,
     font_loading: bool,
@@ -113,12 +98,7 @@ pub enum Message {
     WindowUnfocused(window::Id),
     HotkeyPressed(GlobalHotKeyEvent),
     MenuActivated(MenuEvent),
-    #[cfg(not(target_os = "linux"))]
-    Init(Option<window::Id>),
-    #[cfg(target_os = "linux")]
     Setup,
-    #[cfg(not(target_os = "linux"))]
-    Setup(isize),
     DoType(String),
     HookKeyEvent(HookKeyEvent),
     ToggleLaunchAtStartup,
@@ -175,10 +155,7 @@ impl Flemozi {
     pub fn new() -> (Self, Command<Message>) {
         let config = Config::load();
 
-        #[cfg(target_os = "linux")]
         let load_font_on_start = !START_HIDDEN.load(std::sync::atomic::Ordering::SeqCst);
-        #[cfg(not(target_os = "linux"))]
-        let load_font_on_start = true;
 
         let mut state = State {
             query: String::new(),
@@ -194,17 +171,11 @@ impl Flemozi {
             gif: GifTab::new(),
             tab: Tab::Emojis,
             window_id: None,
-            our_hwnd: None,
-            #[cfg(not(target_os = "linux"))]
-            last_foreground: None,
             system_theme: iced::theme::Mode::None,
             font_loaded: false,
             font_loading: false,
         };
 
-        #[cfg(not(target_os = "linux"))]
-        let cmd = window::latest().map(Message::Init);
-        #[cfg(target_os = "linux")]
         let cmd = {
             let setup = Command::done(Message::Setup);
             let theme = iced::system::theme().map(Message::SystemTheme);
@@ -232,36 +203,6 @@ impl Flemozi {
         let Flemozi::Loaded(state) = self;
 
         match message {
-            #[cfg(not(target_os = "linux"))]
-            Message::Init(id) => {
-                state.window_id = id;
-                if let Some(wid) = id {
-                    return window::run(wid, |w| {
-                        let hwnd = w
-                            .window_handle()
-                            .inspect_err(|e| warn!("Failed to get window handle: {e}"))
-                            .ok()
-                            .and_then(|h| match h.as_raw() {
-                                #[cfg(target_os = "windows")]
-                                raw_window_handle::RawWindowHandle::Win32(h) => {
-                                    Some(h.hwnd.get() as isize)
-                                }
-                                #[cfg(target_os = "macos")]
-                                raw_window_handle::RawWindowHandle::AppKit(h) => {
-                                    Some(h.ns_view.as_ptr() as isize)
-                                }
-                                _ => {
-                                    warn!("Unknown raw window handle type on this platform");
-                                    None
-                                }
-                            })
-                            .unwrap_or(0);
-                        Message::Setup(hwnd)
-                    });
-                }
-                Command::none()
-            }
-            #[cfg(target_os = "linux")]
             Message::Setup => {
                 state.register_hotkey();
                 let img = image::load_from_memory(LOGO_BYTES).expect("Failed to load logo");
@@ -283,11 +224,10 @@ impl Flemozi {
                     platform::set_hook_active(false);
                     state.gif.clear_preview_cache();
                 }
-                #[cfg(target_os = "linux")]
                 {
                     state.font_loading = false;
                 }
-                #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                #[cfg(target_env = "gnu")]
                 platform::trim_allocator();
                 Command::none()
             }
@@ -305,40 +245,6 @@ impl Flemozi {
                 if mode != iced::theme::Mode::None {
                     state.system_theme = mode;
                 }
-                Command::none()
-            }
-            #[cfg(not(target_os = "linux"))]
-            Message::Setup(hwnd) => {
-                state.our_hwnd = Some(hwnd);
-                if hwnd != 0 {
-                    unsafe { platform::set_window_style(hwnd); }
-                } else {
-                    warn!("Window handle is 0 — platform window functions will be disabled");
-                }
-
-                platform::init_keyboard_hook();
-                state.register_hotkey();
-
-                let icon = {
-                    let img = image::load_from_memory(LOGO_BYTES).expect("Failed to load logo");
-                    let rgba = img.to_rgba8();
-                    tray_icon::Icon::from_rgba(rgba.into_raw(), img.width(), img.height())
-                        .expect("Failed to create tray icon")
-                };
-
-                let show = MenuItem::with_id(MenuId::new("show-window"), "Show Window", true, None);
-                let exit = MenuItem::with_id(MenuId::new("exit"), "Exit", true, None);
-                if let Ok(menu) = Menu::with_items(&[&show, &PredefinedMenuItem::separator(), &exit]) {
-                    if let Ok(tray) = TrayIconBuilder::new()
-                        .with_icon(icon)
-                        .with_tooltip("Flemozi")
-                        .with_menu(Box::new(menu))
-                        .build()
-                    {
-                        std::mem::forget(tray);
-                    }
-                }
-
                 Command::none()
             }
             Message::GifFetched(result) => {
@@ -370,7 +276,7 @@ impl Flemozi {
                     || state.gif.entries.get(index).is_none()
                 {
                     drop(result);
-                    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                    #[cfg(target_env = "gnu")]
                     if state.window_id.is_none() {
                         platform::trim_allocator();
                     }
@@ -427,7 +333,7 @@ impl Flemozi {
                     || state.gif.entries.get(index).is_none()
                 {
                     drop(result);
-                    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                    #[cfg(target_env = "gnu")]
                     if state.window_id.is_none() {
                         platform::trim_allocator();
                     }
@@ -1023,17 +929,14 @@ impl Flemozi {
         main_view(state)
     }
 
-    #[cfg(target_os = "linux")]
     pub fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
         self.view()
     }
 
-    #[cfg(target_os = "linux")]
     pub fn title_window(&self, _id: window::Id) -> String {
         self.title()
     }
 
-    #[cfg(target_os = "linux")]
     pub fn theme_window(&self, _id: window::Id) -> Option<iced::Theme> {
         let Flemozi::Loaded(state) = self;
         match state.system_theme {
@@ -1053,17 +956,13 @@ impl Flemozi {
             }),
             titlebar_drag_subscription(),
             Subscription::run(external_events),
-            #[cfg(target_os = "linux")]
             linux_keyboard_subscription(),
-            #[cfg(target_os = "linux")]
             window::close_events().map(Message::WindowClosed),
-            #[cfg(target_os = "linux")]
             iced::system::theme_changes().map(Message::SystemTheme),
         ])
     }
 }
 
-#[cfg(target_os = "linux")]
 fn linux_keyboard_subscription() -> Subscription<Message> {
     event::listen_with(|event, _status, _window| match event {
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -1126,7 +1025,6 @@ fn external_events() -> impl iced::futures::Stream<Item = Message> {
                     warn!("Hook key channel closed");
                 }
             }
-            #[cfg(target_os = "linux")]
             while let Some(cmd) = platform::try_recv_ipc() {
                 let msg = match cmd.as_str() {
                     "toggle" => Message::ToggleWindow,
@@ -1341,46 +1239,28 @@ impl State {
 
         if self.tab == Tab::Gifs {
             let hide = self.hide();
-            if self.is_hidden_or_linux() {
-                if let Some(entry) = self.gif.entries.get(self.gif.selected) {
-                    if !entry.gif_url.is_empty() {
-                        let url = entry.gif_url.clone();
-                        return hide.chain(Command::perform(
-                            crate::tabs::gif::download_image(url),
-                            |result| match result {
-                                Ok(bytes) => Message::GifPaste(bytes),
-                                Err(error) => {
-                                    warn!("Failed to download GIF for paste: {error}");
-                                    Message::HideWindow
-                                }
-                            },
-                        ));
-                    }
+            if let Some(entry) = self.gif.entries.get(self.gif.selected) {
+                if !entry.gif_url.is_empty() {
+                    let url = entry.gif_url.clone();
+                    return hide.chain(Command::perform(
+                        crate::tabs::gif::download_image(url),
+                        |result| match result {
+                            Ok(bytes) => Message::GifPaste(bytes),
+                            Err(error) => {
+                                warn!("Failed to download GIF for paste: {error}");
+                                Message::HideWindow
+                            }
+                        },
+                    ));
                 }
             }
             return hide;
         }
 
-        if self.has_window() {
-            let hide = self.hide();
-            hide.chain(Command::future(async move {
-                Message::DoType(text)
-            }))
-        } else {
-            clipboard::write::<Message>(text)
-        }
-    }
-
-    fn has_window(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        return true;
-        #[cfg(not(target_os = "linux"))]
-        return self.window_id.is_some();
-    }
-
-    /// Whether a native handle was available to hide the window (always on Linux).
-    fn is_hidden_or_linux(&self) -> bool {
-        cfg!(target_os = "linux") || self.our_hwnd.unwrap_or(0) != 0
+        let hide = self.hide();
+        hide.chain(Command::future(async move {
+            Message::DoType(text)
+        }))
     }
 
     fn ensure_emoji_font_loaded(&mut self) -> Command<Message> {
@@ -1394,10 +1274,7 @@ impl State {
 
     #[allow(dead_code)]
     fn is_shown(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        return self.window_id.is_some();
-        #[cfg(not(target_os = "linux"))]
-        return platform::is_hook_active();
+        self.window_id.is_some()
     }
 
     /// Fresh session each time the picker opens: first tab, empty searches.
@@ -1430,7 +1307,6 @@ impl State {
         self.gif.selected = self.gif.filtered.first().copied().unwrap_or(0);
     }
 
-    #[cfg(target_os = "linux")]
     fn show(&mut self) -> Command<Message> {
         platform::set_hook_active(true);
         let show = if let Some(id) = self.window_id {
@@ -1444,22 +1320,6 @@ impl State {
         Command::batch([show, self.ensure_emoji_font_loaded()])
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn show(&mut self) -> Command<Message> {
-        self.reset_session();
-        self.last_foreground = Some(platform::foreground_window());
-        platform::set_hook_active(true);
-        let hwnd = self.our_hwnd.unwrap_or(0);
-        if hwnd != 0 {
-            let (cx, cy) = platform::get_cursor_pos();
-            let (wx, wy) = platform::clamp_window_position(cx, cy, 500, 500);
-            info!("show: showing window at ({wx},{wy})");
-            unsafe { platform::show_no_activate(hwnd, wx, wy); }
-        }
-        self.ensure_emoji_font_loaded()
-    }
-
-    #[cfg(target_os = "linux")]
     fn hide(&mut self) -> Command<Message> {
         platform::set_hook_active(false);
         self.gif.clear_preview_cache();
@@ -1469,26 +1329,7 @@ impl State {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn hide(&mut self) -> Command<Message> {
-        self.gif.clear_preview_cache();
-        let hwnd = self.our_hwnd.unwrap_or(0);
-        if hwnd != 0 {
-            unsafe { platform::hide_window(hwnd); }
-        }
-        Command::none()
-    }
-
-    #[cfg(target_os = "linux")]
     fn exit(&mut self) -> Command<Message> {
         iced::exit()
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn exit(&mut self) -> Command<Message> {
-        match self.window_id {
-            Some(id) => window::close(id),
-            None => Command::none(),
-        }
     }
 }

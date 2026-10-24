@@ -1,8 +1,8 @@
 # Local PKGBUILD: builds the Rust version of Flemozi from this checkout.
 # Usage (from this directory): makepkg -si
 pkgname=flemozi
-pkgver=0.1.0
-pkgrel=4
+pkgver=0.3.0
+pkgrel=1
 pkgdesc='Emoji, emoticon and GIF picker (Rust/iced)'
 arch=('x86_64')
 url='https://github.com/lyubomirhristovv/flemozi'

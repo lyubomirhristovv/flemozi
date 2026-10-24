@@ -1,9 +1,7 @@
-# Flemozi (Arch Linux fork)
+# Flemozi (Linux/Arch fork)
 
-Rust + [iced] 0.14 emoji / emoticon / GIF picker. Fork whose purpose is Linux
-(Arch) support; Windows/macOS code from upstream is kept but not built or
-tested here. **Not Flutter** — ignore the Flutter-era `Makefile` and
-`CHANGELOG.md`.
+Rust + [iced] 0.14 emoji / emoticon / GIF picker. This fork supports Linux and
+is packaged for Arch Linux. Other operating systems are not supported.
 
 ## Build & install (Arch)
 
@@ -16,8 +14,9 @@ cargo build / cargo run                         # dev
 - `packaging/arch/PKGBUILD` builds from the local checkout (not a git source);
   `pkgver` comes from `Cargo.toml`. Installs the binary, `packaging/linux/flemozi.desktop`,
   icons and license.
-- Edition 2024 → Rust ≥1.85. No tests or linter/formatter config. GitHub Actions
-  builds an x86_64 Arch package when a GitHub release is published.
+- Edition 2024 → Rust ≥1.85. A small config test runs with `cargo test`; there
+  is no linter/formatter config. GitHub Actions builds an x86_64 Arch package
+  when a GitHub release is published.
 
 ## Klipy API key
 
@@ -32,8 +31,8 @@ Wayland forbids global key hooks, global hotkeys, window positioning and
 re-showing hidden windows, so on Linux:
 
 - The app is an `iced::daemon`; "show" opens a window, "hide" closes it.
-- Keys come from iced keyboard events, mapped to the same `HookKeyEvent` the
-  Win/mac hooks produce, so `app.rs` key handling is shared.
+- Keys come from iced keyboard events and are mapped to `HookKeyEvent` for
+  handling in `app.rs`.
 - Single instance via Unix socket `$XDG_RUNTIME_DIR/flemozi-$USER.sock`;
   `flemozi --toggle` / `--show` signal the running instance. Users bind
   `--toggle` in their DE shortcut settings. `global-hotkey` still registers
@@ -52,11 +51,10 @@ re-showing hidden windows, so on Linux:
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Entrypoint; Linux CLI/IPC + `iced::daemon`, else `iced::application` |
-| `src/app.rs` | State, messages, update & subscriptions (`show`/`hide` per platform) |
+| `src/main.rs` | Linux entrypoint; CLI/IPC + `iced::daemon` |
+| `src/app.rs` | State, messages, update & subscriptions |
 | `src/linux.rs` | Linux backend (see above) |
-| `src/win32.rs` / `src/macos.rs` | Upstream Windows / macOS backends |
 | `src/config.rs` | Config load/save, launch-at-startup |
-| `src/tabs/` | Emoji, emoticon, GIF (Klipy) and settings tabs |
+| `src/tabs/` | Emoji, emoticon and GIF (Klipy) logic |
 | `src/ui.rs`, `src/ui/` | Views and styles |
 | `src/assets/emojis.rs` | Static emoji dataset; rendered with embedded `assets/NotoColorEmoji.ttf` |

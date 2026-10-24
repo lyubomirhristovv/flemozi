@@ -28,15 +28,8 @@ impl Default for Config {
 }
 
 impl Config {
-    #[cfg(target_os = "linux")]
     fn path() -> PathBuf {
         xdg_config_home().join("flemozi").join("config.json")
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn path() -> PathBuf {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(appdata).join("flemozi").join("config.json")
     }
 
     pub fn load() -> Self {
@@ -71,7 +64,6 @@ impl Config {
         file.write_all(&serialized)
     }
 
-    #[cfg(target_os = "linux")]
     pub fn apply_launch_at_startup(&self) {
         let dir = xdg_config_home().join("autostart");
         let file = dir.join("flemozi.desktop");
@@ -90,34 +82,8 @@ impl Config {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
-    pub fn apply_launch_at_startup(&self) {
-        let startup = std::env::var("APPDATA")
-            .map(|a| PathBuf::from(a).join(r"Microsoft\Windows\Start Menu\Programs\Startup"))
-            .unwrap_or_default();
-        let lnk = startup.join("Flemozi.lnk");
-
-        if self.launch_at_startup {
-            if let Ok(exe) = std::env::current_exe() {
-                let _ = fs::create_dir_all(&startup);
-                let script = format!(
-                    "$ws=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');\
-                     $ws.TargetPath='{}';\
-                     $ws.Save()",
-                    lnk.to_string_lossy().replace('\'', "''"),
-                    exe.to_string_lossy().replace('\'', "''"),
-                );
-                let _ = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Command", &script])
-                    .output();
-            }
-        } else {
-            let _ = fs::remove_file(&lnk);
-        }
-    }
 }
 
-#[cfg(target_os = "linux")]
 fn xdg_config_home() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
