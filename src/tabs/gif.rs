@@ -24,6 +24,7 @@ pub struct GifTab {
     pub entries: Vec<GifEntry>,
     pub trending_cache: Option<Vec<GifEntry>>,
     pub frames: HashMap<usize, iced_gif::Frames>,
+    pub thumbnail_generation: u64,
     pub filtered: Vec<usize>,
     pub selected: usize,
     pub visible: HashSet<usize>,
@@ -72,6 +73,7 @@ impl GifTab {
             entries: Vec::new(),
             trending_cache: None,
             frames: HashMap::new(),
+            thumbnail_generation: 0,
             filtered: Vec::new(),
             selected: 0,
             visible: HashSet::new(),
@@ -84,6 +86,7 @@ impl GifTab {
     }
 
     pub fn set_entries(&mut self, entries: Vec<GifEntry>) {
+        self.thumbnail_generation = self.thumbnail_generation.wrapping_add(1);
         self.entries = entries;
         self.filtered = (0..self.entries.len()).collect();
         self.selected = self.filtered.first().copied().unwrap_or(0);
@@ -91,13 +94,19 @@ impl GifTab {
         self.error = None;
         self.frames.clear();
         self.loading_frames.clear();
+        self.visible.clear();
     }
 
     pub fn set_error(&mut self, msg: String) {
+        self.thumbnail_generation = self.thumbnail_generation.wrapping_add(1);
         self.entries.clear();
         self.filtered.clear();
+        self.selected = 0;
         self.loading = false;
         self.error = Some(msg);
+        self.frames.clear();
+        self.loading_frames.clear();
+        self.visible.clear();
     }
 
     pub fn apply_search(&mut self, query: &str) -> bool {
@@ -243,11 +252,23 @@ async fn get(path: &str, params: &[(&str, &str)]) -> Result<Vec<GifEntry>, Strin
         .collect())
 }
 
-pub async fn download_image(url: String) -> Vec<u8> {
-    let Ok(resp) = reqwest::get(&url).await else {
-        return Vec::new();
-    };
-    resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default()
+pub async fn download_image(url: String) -> Result<Vec<u8>, String> {
+    let resp = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP response returned {}", resp.status()));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("failed to read image response: {e}"))?;
+    if bytes.is_empty() {
+        return Err("image response was empty".to_string());
+    }
+
+    Ok(bytes.to_vec())
 }
 
 pub async fn fetch_trending_gifs() -> Result<Vec<GifEntry>, String> {

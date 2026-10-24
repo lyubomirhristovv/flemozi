@@ -121,7 +121,7 @@ pub enum Message {
     GifFetched(Result<Vec<crate::tabs::gif::GifEntry>, String>),
     GifSearchResult(Result<Vec<crate::tabs::gif::GifEntry>, String>),
     GifSearchDebounce(String),
-    GifThumbnail(usize, Vec<u8>),
+    GifThumbnail(u64, usize, u8, Result<Vec<u8>, String>),
     GifPaste(Vec<u8>),
     FontLoaded(Result<(), iced::font::Error>),
     #[allow(dead_code)]
@@ -147,6 +147,7 @@ fn handle_gif_result(
     match result {
         Ok(entries) => {
             state.gif.set_entries(entries);
+            let generation = state.gif.thumbnail_generation;
             let count = 30.min(state.gif.entries.len());
             let mut cmds = Vec::with_capacity(count + 1);
             for i in 0..count {
@@ -157,7 +158,7 @@ fn handle_gif_result(
                         let url = entry.preview_url.clone();
                         cmds.push(Command::perform(
                             crate::tabs::gif::download_image(url),
-                            move |bytes| Message::GifThumbnail(i, bytes),
+                            move |result| Message::GifThumbnail(generation, i, 1, result),
                         ));
                     }
                 }
@@ -351,10 +352,50 @@ impl Flemozi {
                 }
                 Command::none()
             }
-            Message::GifThumbnail(index, bytes) => {
-                state.gif.loading_frames.remove(&index);
-                if let Ok(frames) = iced_gif::Frames::from_bytes(bytes) {
-                    state.gif.frames.insert(index, frames);
+            Message::GifThumbnail(generation, index, attempt, result) => {
+                if generation != state.gif.thumbnail_generation
+                    || state.gif.entries.get(index).is_none()
+                {
+                    return Command::none();
+                }
+
+                let frames = result.and_then(|bytes| {
+                    iced_gif::Frames::from_bytes(bytes)
+                        .map_err(|error| format!("GIF decoding failed: {error:?}"))
+                });
+                match frames {
+                    Ok(frames) => {
+                        state.gif.loading_frames.remove(&index);
+                        state.gif.frames.insert(index, frames);
+                    }
+                    Err(_error) if attempt < 3 => {
+                        let Some(url) = state
+                            .gif
+                            .entries
+                            .get(index)
+                            .map(|entry| entry.preview_url.clone())
+                        else {
+                            state.gif.loading_frames.remove(&index);
+                            return Command::none();
+                        };
+                        let next_attempt = attempt + 1;
+                        return Command::perform(
+                            async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(
+                                    200 * u64::from(attempt),
+                                ))
+                                .await;
+                                crate::tabs::gif::download_image(url).await
+                            },
+                            move |result| {
+                                Message::GifThumbnail(generation, index, next_attempt, result)
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        state.gif.loading_frames.remove(&index);
+                        warn!("GIF thumbnail {index} failed after {attempt} attempts: {error}");
+                    }
                 }
                 Command::none()
             }
@@ -589,9 +630,12 @@ impl Flemozi {
                                 if !entry.preview_url.is_empty() {
                                     state.gif.loading_frames.insert(i);
                                     let url = entry.preview_url.clone();
+                                    let generation = state.gif.thumbnail_generation;
                                     return Command::perform(
                                         crate::tabs::gif::download_image(url),
-                                        move |bytes| Message::GifThumbnail(i, bytes),
+                                        move |result| {
+                                            Message::GifThumbnail(generation, i, 1, result)
+                                        },
                                     );
                                 }
                             }
@@ -1192,15 +1236,12 @@ impl State {
                     if !entry.gif_url.is_empty() {
                         let url = entry.gif_url.clone();
                         return hide.chain(Command::perform(
-                            async move {
-                                let bytes = crate::tabs::gif::download_image(url).await;
-                                bytes
-                            },
-                            |bytes| {
-                                if bytes.is_empty() {
+                            crate::tabs::gif::download_image(url),
+                            |result| match result {
+                                Ok(bytes) => Message::GifPaste(bytes),
+                                Err(error) => {
+                                    warn!("Failed to download GIF for paste: {error}");
                                     Message::HideWindow
-                                } else {
-                                    Message::GifPaste(bytes)
                                 }
                             },
                         ));
