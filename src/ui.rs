@@ -386,7 +386,7 @@ fn gif_cell(state: &State, i: usize) -> Element<'_, Message> {
     };
 
     sensor(styled)
-        .key(i)
+        .key((state.gif.thumbnail_generation, i))
         .anticipate(200)
         .on_show(move |_| Message::Shown(i))
         .into()
