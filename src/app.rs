@@ -148,7 +148,7 @@ fn handle_gif_result(
         Ok(entries) => {
             state.gif.set_entries(entries);
             let count = 30.min(state.gif.entries.len());
-            let mut cmds = Vec::with_capacity(count);
+            let mut cmds = Vec::with_capacity(count + 1);
             for i in 0..count {
                 state.gif.visible.insert(i);
                 if let Some(entry) = state.gif.entries.get(i) {
@@ -162,6 +162,10 @@ fn handle_gif_result(
                     }
                 }
             }
+            cmds.push(operation::scroll_to(
+                state.gif.scroll_id.clone(),
+                scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+            ));
             Command::batch(cmds)
         }
         Err(msg) => {
