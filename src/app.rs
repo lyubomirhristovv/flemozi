@@ -140,6 +140,37 @@ pub enum Move {
     Right,
 }
 
+fn handle_gif_result(
+    state: &mut State,
+    result: Result<Vec<crate::tabs::gif::GifEntry>, String>,
+) -> Command<Message> {
+    match result {
+        Ok(entries) => {
+            state.gif.set_entries(entries);
+            let count = 30.min(state.gif.entries.len());
+            let mut cmds = Vec::with_capacity(count);
+            for i in 0..count {
+                state.gif.visible.insert(i);
+                if let Some(entry) = state.gif.entries.get(i) {
+                    if !entry.preview_url.is_empty() {
+                        state.gif.loading_frames.insert(i);
+                        let url = entry.preview_url.clone();
+                        cmds.push(Command::perform(
+                            crate::tabs::gif::download_image(url),
+                            move |bytes| Message::GifThumbnail(i, bytes),
+                        ));
+                    }
+                }
+            }
+            Command::batch(cmds)
+        }
+        Err(msg) => {
+            state.gif.set_error(msg);
+            Command::none()
+        }
+    }
+}
+
 impl Flemozi {
     pub fn new() -> (Self, Command<Message>) {
         let config = Config::load();
@@ -292,30 +323,20 @@ impl Flemozi {
 
                 Command::none()
             }
-            Message::GifFetched(result) | Message::GifSearchResult(result) => {
-                match result {
-                    Ok(entries) => {
-                        state.gif.set_entries(entries);
-                        let count = 30.min(state.gif.entries.len());
-                        let mut cmds = Vec::with_capacity(count);
-                        for i in 0..count {
-                            state.gif.visible.insert(i);
-                            if let Some(entry) = state.gif.entries.get(i) {
-                                if !entry.preview_url.is_empty() {
-                                    state.gif.loading_frames.insert(i);
-                                    let url = entry.preview_url.clone();
-                                    cmds.push(Command::perform(
-                                        crate::tabs::gif::download_image(url),
-                                        move |bytes| Message::GifThumbnail(i, bytes),
-                                    ));
-                                }
-                            }
-                        }
-                        return Command::batch(cmds);
-                    }
-                    Err(msg) => state.gif.set_error(msg),
+            Message::GifFetched(result) => {
+                if let Ok(entries) = &result {
+                    state.gif.trending_cache = Some(entries.clone());
                 }
-                Command::none()
+                if state.tab != Tab::Gifs || !state.query.is_empty() {
+                    return Command::none();
+                }
+                handle_gif_result(state, result)
+            }
+            Message::GifSearchResult(result) => {
+                if state.tab != Tab::Gifs || state.query.is_empty() {
+                    return Command::none();
+                }
+                handle_gif_result(state, result)
             }
             Message::GifSearchDebounce(query) => {
                 if state.query == query {
@@ -388,6 +409,9 @@ impl Flemozi {
                                 Message::GifSearchResult,
                             );
                         } else if state.gif.entries.is_empty() {
+                            if let Some(entries) = state.gif.trending_cache.clone() {
+                                return handle_gif_result(state, Ok(entries));
+                            }
                             return Command::perform(
                                 crate::tabs::gif::fetch_trending_gifs(),
                                 Message::GifFetched,
@@ -532,6 +556,9 @@ impl Flemozi {
                         state.query.clear();
                         state.cursor = 0;
                         state.selection = None;
+                        if let Some(entries) = state.gif.trending_cache.clone() {
+                            return handle_gif_result(state, Ok(entries));
+                        }
                         return Command::perform(
                             crate::tabs::gif::fetch_trending_gifs(),
                             Message::GifFetched,
@@ -795,8 +822,16 @@ impl Flemozi {
                             state.emoticon.apply_search(&state.query);
                         }
                         Tab::Gifs => {
-                            let empty = state.gif.apply_search(&state.query);
-                            if !state.query.is_empty() && empty {
+                            if state.query.is_empty() {
+                                if let Some(entries) = state.gif.trending_cache.clone() {
+                                    return handle_gif_result(state, Ok(entries));
+                                }
+                                return Command::perform(
+                                    crate::tabs::gif::fetch_trending_gifs(),
+                                    Message::GifFetched,
+                                );
+                            }
+                            if state.gif.apply_search(&state.query) {
                                 let q = state.query.clone();
                                 return Command::perform(
                                     async {

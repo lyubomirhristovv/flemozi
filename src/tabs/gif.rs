@@ -22,6 +22,7 @@ pub struct GifEntry {
 
 pub struct GifTab {
     pub entries: Vec<GifEntry>,
+    pub trending_cache: Option<Vec<GifEntry>>,
     pub frames: HashMap<usize, iced_gif::Frames>,
     pub filtered: Vec<usize>,
     pub selected: usize,
@@ -69,6 +70,7 @@ impl GifTab {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            trending_cache: None,
             frames: HashMap::new(),
             filtered: Vec::new(),
             selected: 0,
