@@ -16,7 +16,8 @@ cargo build / cargo run                         # dev
 - `packaging/arch/PKGBUILD` builds from the local checkout (not a git source);
   `pkgver` comes from `Cargo.toml`. Installs the binary, `packaging/linux/flemozi.desktop`,
   icons and license.
-- Edition 2024 → Rust ≥1.85. No tests, no CI, no linter/formatter config.
+- Edition 2024 → Rust ≥1.85. No tests or linter/formatter config. GitHub Actions
+  builds an x86_64 Arch package when a GitHub release is published.
 
 ## `.env` / API key
 

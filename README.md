@@ -32,7 +32,21 @@ it with `sudo pacman -U`. If Flemozi is running, it is restarted.
 | `--no-install` | Only build; package lands in `packaging/arch/` |
 | `--clean`      | Discard cached build output (full rebuild)    |
 
-To update, `git pull` and run the script again. To uninstall:
+### GitHub Actions package
+
+Publishing a GitHub release builds an x86_64 Arch package and attaches the
+`.pkg.tar.zst` package to that release. To install it:
+
+1. Open the repository's [Releases](https://github.com/lyubomirhristovv/flemozi/releases).
+2. Open the release and, after the **Build Arch package** workflow finishes,
+   download the `.pkg.tar.zst` file from **Assets**.
+3. Open a terminal in the downloaded file's folder and run:
+
+```sh
+sudo pacman -U ./flemozi-*.pkg.tar.zst
+```
+
+Install the package from a newer release the same way to update. To uninstall:
 `sudo pacman -R flemozi`.
 
 ### GIF API key

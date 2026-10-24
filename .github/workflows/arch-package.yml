@@ -1,0 +1,46 @@
+name: Build Arch package
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --user root
+    steps:
+      - name: Install Arch build dependencies
+        run: pacman -Syu --noconfirm --needed base-devel cargo git gtk3 libayatana-appindicator libxkbcommon wayland fontconfig
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare unprivileged build user
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build package
+        run: runuser -u builder -- "$GITHUB_WORKSPACE/packaging/arch/build-and-install.sh" --no-install
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: flemozi-arch-x86_64-${{ github.sha }}
+          path: packaging/arch/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach package to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/arch/*.pkg.tar.zst
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
