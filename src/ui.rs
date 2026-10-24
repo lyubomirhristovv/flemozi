@@ -344,6 +344,7 @@ fn emoticons_view(state: &State) -> Element<'_, Message> {
 }
 
 fn gif_cell(state: &State, i: usize) -> Element<'_, Message> {
+    let generation = state.gif.thumbnail_generation;
     let is_visible = state.gif.visible.contains(&i);
     let has_frames = state.gif.frames.contains_key(&i);
     let is_selected = i == state.gif.selected;
@@ -388,7 +389,8 @@ fn gif_cell(state: &State, i: usize) -> Element<'_, Message> {
     sensor(styled)
         .key((state.gif.thumbnail_generation, i))
         .anticipate(200)
-        .on_show(move |_| Message::Shown(i))
+        .on_show(move |_| Message::GifShown(generation, i))
+        .on_hide(Message::GifHidden(generation, i))
         .into()
 }
 

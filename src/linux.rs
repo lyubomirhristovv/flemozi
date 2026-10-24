@@ -158,6 +158,15 @@ pub fn try_recv_ipc() -> Option<String> {
     IPC_RX.get()?.lock().ok()?.try_recv().ok()
 }
 
+#[cfg(target_env = "gnu")]
+pub fn trim_allocator() {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+
+    let _ = unsafe { malloc_trim(0) };
+}
+
 // ── tray ──
 
 /// tray-icon on Linux needs a running GTK main loop on the creating thread.

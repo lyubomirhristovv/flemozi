@@ -90,6 +90,8 @@ pub struct State {
     pub last_foreground: Option<isize>,
     #[allow(dead_code)]
     pub system_theme: iced::theme::Mode,
+    font_loaded: bool,
+    font_loading: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +104,8 @@ pub enum Message {
     #[allow(dead_code)]
     ClearSearch,
     Shown(usize),
+    GifShown(u64, usize),
+    GifHidden(u64, usize),
     TabSelected(Tab),
     TitleBarDrag,
     HideWindow,
@@ -122,6 +126,11 @@ pub enum Message {
     GifSearchResult(Result<Vec<crate::tabs::gif::GifEntry>, String>),
     GifSearchDebounce(String),
     GifThumbnail(u64, usize, u8, Result<Vec<u8>, String>),
+    GifDecoded(
+        u64,
+        usize,
+        Result<std::sync::Arc<iced_gif::Frames>, String>,
+    ),
     GifPaste(Vec<u8>),
     FontLoaded(Result<(), iced::font::Error>),
     #[allow(dead_code)]
@@ -147,27 +156,10 @@ fn handle_gif_result(
     match result {
         Ok(entries) => {
             state.gif.set_entries(entries);
-            let generation = state.gif.thumbnail_generation;
-            let count = 30.min(state.gif.entries.len());
-            let mut cmds = Vec::with_capacity(count + 1);
-            for i in 0..count {
-                state.gif.visible.insert(i);
-                if let Some(entry) = state.gif.entries.get(i) {
-                    if !entry.preview_url.is_empty() {
-                        state.gif.loading_frames.insert(i);
-                        let url = entry.preview_url.clone();
-                        cmds.push(Command::perform(
-                            crate::tabs::gif::download_image(url),
-                            move |result| Message::GifThumbnail(generation, i, 1, result),
-                        ));
-                    }
-                }
-            }
-            cmds.push(operation::scroll_to(
+            operation::scroll_to(
                 state.gif.scroll_id.clone(),
                 scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
-            ));
-            Command::batch(cmds)
+            )
         }
         Err(msg) => {
             state.gif.set_error(msg);
@@ -180,7 +172,12 @@ impl Flemozi {
     pub fn new() -> (Self, Command<Message>) {
         let config = Config::load();
 
-        let state = State {
+        #[cfg(target_os = "linux")]
+        let load_font_on_start = !START_HIDDEN.load(std::sync::atomic::Ordering::SeqCst);
+        #[cfg(not(target_os = "linux"))]
+        let load_font_on_start = true;
+
+        let mut state = State {
             query: String::new(),
             cursor: 0,
             selection: None,
@@ -197,6 +194,8 @@ impl Flemozi {
             #[cfg(not(target_os = "linux"))]
             last_foreground: None,
             system_theme: iced::theme::Mode::None,
+            font_loaded: false,
+            font_loading: false,
         };
 
         #[cfg(not(target_os = "linux"))]
@@ -212,8 +211,11 @@ impl Flemozi {
                 setup.chain(Command::done(Message::ToggleWindow))
             }
         };
-        let font_bytes: &[u8] = include_bytes!("../assets/NotoColorEmoji.ttf");
-        let font_cmd = iced::font::load(font_bytes).map(Message::FontLoaded);
+        let font_cmd = if load_font_on_start {
+            state.ensure_emoji_font_loaded()
+        } else {
+            Command::none()
+        };
 
         (Self::Loaded(state), Command::batch([cmd, font_cmd]))
     }
@@ -275,7 +277,15 @@ impl Flemozi {
                 if state.window_id == Some(id) {
                     state.window_id = None;
                     platform::set_hook_active(false);
+                    state.gif.clear_preview_cache();
                 }
+                #[cfg(target_os = "linux")]
+                {
+                    state.font_loaded = false;
+                    state.font_loading = false;
+                }
+                #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                platform::trim_allocator();
                 Command::none()
             }
             Message::WindowUnfocused(id) => {
@@ -358,17 +368,22 @@ impl Flemozi {
                 {
                     return Command::none();
                 }
-
-                let frames = result.and_then(|bytes| {
-                    iced_gif::Frames::from_bytes(bytes)
-                        .map_err(|error| format!("GIF decoding failed: {error:?}"))
-                });
-                match frames {
-                    Ok(frames) => {
-                        state.gif.loading_frames.remove(&index);
-                        state.gif.frames.insert(index, frames);
+                match result {
+                    Ok(bytes) => {
+                        return Command::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    crate::tabs::gif::decode_preview(bytes)
+                                })
+                                .await
+                                .map_err(|error| {
+                                    format!("GIF preview decoder worker failed: {error}")
+                                })?
+                            },
+                            move |result| Message::GifDecoded(generation, index, result),
+                        );
                     }
-                    Err(_error) if attempt < 3 => {
+                    Err(_error) if attempt < 3 && state.gif.visible.contains(&index) => {
                         let Some(url) = state
                             .gif
                             .entries
@@ -395,6 +410,23 @@ impl Flemozi {
                     Err(error) => {
                         state.gif.loading_frames.remove(&index);
                         warn!("GIF thumbnail {index} failed after {attempt} attempts: {error}");
+                    }
+                }
+                Command::none()
+            }
+            Message::GifDecoded(generation, index, result) => {
+                if generation != state.gif.thumbnail_generation
+                    || state.gif.entries.get(index).is_none()
+                {
+                    return Command::none();
+                }
+                state.gif.loading_frames.remove(&index);
+                match result {
+                    Ok(frames) => {
+                        state.gif.frames.insert(index, frames);
+                    }
+                    Err(error) => {
+                        warn!("GIF thumbnail {index} decoding failed: {error}");
                     }
                 }
                 Command::none()
@@ -540,8 +572,12 @@ impl Flemozi {
                 Command::none()
             }
             Message::FontLoaded(result) => {
+                state.font_loading = false;
                 match result {
-                    Ok(()) => info!("Noto Color Emoji font loaded"),
+                    Ok(()) => {
+                        state.font_loaded = true;
+                        info!("Noto Color Emoji font loaded");
+                    }
                     Err(e) => warn!("Failed to load Noto Color Emoji: {e:?}"),
                 }
                 Command::none()
@@ -638,27 +674,37 @@ impl Flemozi {
                     Tab::Emoticons => {
                         state.emoticon.visible.insert(i);
                     }
-                    Tab::Gifs => {
-                        state.gif.visible.insert(i);
-                        if !state.gif.frames.contains_key(&i)
-                            && !state.gif.loading_frames.contains(&i)
-                        {
-                            if let Some(entry) = state.gif.entries.get(i) {
-                                if !entry.preview_url.is_empty() {
-                                    state.gif.loading_frames.insert(i);
-                                    let url = entry.preview_url.clone();
-                                    let generation = state.gif.thumbnail_generation;
-                                    return Command::perform(
-                                        crate::tabs::gif::download_image(url),
-                                        move |result| {
-                                            Message::GifThumbnail(generation, i, 1, result)
-                                        },
-                                    );
-                                }
-                            }
+                    Tab::Gifs => {}
+                    Tab::Settings => {}
+                }
+                Command::none()
+            }
+            Message::GifShown(generation, i) => {
+                if generation != state.gif.thumbnail_generation
+                    || state.tab != Tab::Gifs
+                    || !platform::is_hook_active()
+                {
+                    return Command::none();
+                }
+
+                state.gif.visible.insert(i);
+                if !state.gif.frames.contains_key(&i) && !state.gif.loading_frames.contains(&i) {
+                    if let Some(entry) = state.gif.entries.get(i) {
+                        if !entry.preview_url.is_empty() {
+                            state.gif.loading_frames.insert(i);
+                            let url = entry.preview_url.clone();
+                            return Command::perform(
+                                crate::tabs::gif::download_image(url),
+                                move |result| Message::GifThumbnail(generation, i, 1, result),
+                            );
                         }
                     }
-                    Tab::Settings => {}
+                }
+                Command::none()
+            }
+            Message::GifHidden(generation, i) => {
+                if generation == state.gif.thumbnail_generation {
+                    state.gif.visible.remove(&i);
                 }
                 Command::none()
             }
@@ -1290,6 +1336,15 @@ impl State {
         cfg!(target_os = "linux") || self.our_hwnd.unwrap_or(0) != 0
     }
 
+    fn ensure_emoji_font_loaded(&mut self) -> Command<Message> {
+        if self.font_loaded || self.font_loading {
+            return Command::none();
+        }
+        self.font_loading = true;
+        let font_bytes: &[u8] = include_bytes!("../assets/NotoColorEmoji.ttf");
+        iced::font::load(font_bytes).map(Message::FontLoaded)
+    }
+
     #[allow(dead_code)]
     fn is_shown(&self) -> bool {
         #[cfg(target_os = "linux")]
@@ -1321,9 +1376,7 @@ impl State {
         if gif_searched {
             self.gif.entries.clear();
             self.gif.filtered.clear();
-            self.gif.frames.clear();
-            self.gif.loading_frames.clear();
-            self.gif.visible.clear();
+            self.gif.clear_preview_cache();
             self.gif.loading = true;
         }
         self.gif.saved_search = SearchState::new();
@@ -1333,13 +1386,15 @@ impl State {
     #[cfg(target_os = "linux")]
     fn show(&mut self) -> Command<Message> {
         platform::set_hook_active(true);
-        if let Some(id) = self.window_id {
-            return window::gain_focus(id);
-        }
-        self.reset_session();
-        let (id, open) = window::open(crate::window_settings());
-        self.window_id = Some(id);
-        open.discard()
+        let show = if let Some(id) = self.window_id {
+            window::gain_focus(id)
+        } else {
+            self.reset_session();
+            let (id, open) = window::open(crate::window_settings());
+            self.window_id = Some(id);
+            open.discard()
+        };
+        Command::batch([show, self.ensure_emoji_font_loaded()])
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -1354,12 +1409,13 @@ impl State {
             info!("show: showing window at ({wx},{wy})");
             unsafe { platform::show_no_activate(hwnd, wx, wy); }
         }
-        Command::none()
+        self.ensure_emoji_font_loaded()
     }
 
     #[cfg(target_os = "linux")]
     fn hide(&mut self) -> Command<Message> {
         platform::set_hook_active(false);
+        self.gif.clear_preview_cache();
         match self.window_id.take() {
             Some(id) => window::close(id),
             None => Command::none(),
@@ -1368,6 +1424,7 @@ impl State {
 
     #[cfg(not(target_os = "linux"))]
     fn hide(&mut self) -> Command<Message> {
+        self.gif.clear_preview_cache();
         let hwnd = self.our_hwnd.unwrap_or(0);
         if hwnd != 0 {
             unsafe { platform::hide_window(hwnd); }

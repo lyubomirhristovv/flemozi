@@ -1,13 +1,20 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use iced::widget::{self, operation, scrollable};
 use iced::Task as Command;
+use iced::widget::{self, operation, scrollable};
 use serde::Deserialize;
 
 use crate::app::{Message, Move, SPACING, SearchState};
 
 const API_BASE: &str = "https://api.klipy.com/api/v1";
 const GIF_COLUMNS: usize = 2;
+
+pub fn decode_preview(bytes: Vec<u8>) -> Result<Arc<iced_gif::Frames>, String> {
+    iced_gif::Frames::from_bytes(bytes)
+        .map(Arc::new)
+        .map_err(|error| format!("GIF thumbnail decoding failed: {error}"))
+}
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -23,7 +30,7 @@ pub struct GifEntry {
 pub struct GifTab {
     pub entries: Vec<GifEntry>,
     pub trending_cache: Option<Vec<GifEntry>>,
-    pub frames: HashMap<usize, iced_gif::Frames>,
+    pub frames: HashMap<usize, Arc<iced_gif::Frames>>,
     pub thumbnail_generation: u64,
     pub filtered: Vec<usize>,
     pub selected: usize,
@@ -85,28 +92,29 @@ impl GifTab {
         }
     }
 
-    pub fn set_entries(&mut self, entries: Vec<GifEntry>) {
+    pub fn clear_preview_cache(&mut self) {
         self.thumbnail_generation = self.thumbnail_generation.wrapping_add(1);
-        self.entries = entries;
-        self.filtered = (0..self.entries.len()).collect();
-        self.selected = self.filtered.first().copied().unwrap_or(0);
-        self.loading = false;
-        self.error = None;
         self.frames.clear();
         self.loading_frames.clear();
         self.visible.clear();
     }
 
+    pub fn set_entries(&mut self, entries: Vec<GifEntry>) {
+        self.clear_preview_cache();
+        self.entries = entries;
+        self.filtered = (0..self.entries.len()).collect();
+        self.selected = self.filtered.first().copied().unwrap_or(0);
+        self.loading = false;
+        self.error = None;
+    }
+
     pub fn set_error(&mut self, msg: String) {
-        self.thumbnail_generation = self.thumbnail_generation.wrapping_add(1);
+        self.clear_preview_cache();
         self.entries.clear();
         self.filtered.clear();
         self.selected = 0;
         self.loading = false;
         self.error = Some(msg);
-        self.frames.clear();
-        self.loading_frames.clear();
-        self.visible.clear();
     }
 
     pub fn apply_search(&mut self, query: &str) -> bool {
@@ -299,4 +307,45 @@ pub async fn search_gifs(query: String) -> Result<Vec<GifEntry>, String> {
         tracing::error!("Klipy search failed: {e}");
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_gif(frame_count: usize, width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            let frames = (0..frame_count).map(|index| {
+                let color = image::Rgba([index as u8, index.wrapping_mul(7) as u8, 0, 255]);
+                image::Frame::from_parts(
+                    image::RgbaImage::from_pixel(width, height, color),
+                    0,
+                    0,
+                    image::Delay::from_numer_denom_ms(50, 1),
+                )
+            });
+            encoder.encode_frames(frames).unwrap();
+        }
+        bytes
+    }
+
+    #[test]
+    fn decode_preview_decodes_a_valid_gif() {
+        assert!(decode_preview(make_gif(3, 64, 64)).is_ok());
+    }
+
+    #[test]
+    fn clear_preview_cache_drops_all_cached_state() {
+        let mut tab = GifTab::new();
+        tab.frames.insert(0, decode_preview(make_gif(1, 8, 8)).unwrap());
+        tab.visible.insert(0);
+        tab.loading_frames.insert(1);
+        tab.clear_preview_cache();
+
+        assert!(tab.frames.is_empty());
+        assert!(tab.visible.is_empty());
+        assert!(tab.loading_frames.is_empty());
+    }
 }
